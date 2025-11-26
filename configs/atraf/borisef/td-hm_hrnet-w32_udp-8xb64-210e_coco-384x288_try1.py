@@ -1,16 +1,16 @@
 _base_ = ['/home/borisef/projects/mm/mmpose/configs/_base_/default_runtime.py']
 
 MY_BATCH = 1
-work_dir =  '/home/borisef/projects/mm/mmpose/tools/atraf/borisef/work_dirs/hrnet_UDP_w32_try1'
+work_dir =  '/home/borisef/projects/mm/mmpose/tools/atraf/borisef/work_dirs/hrnet_UDP_w32_try1_'
 resume = True
 
 # runtime
-train_cfg = dict(max_epochs=210, val_interval=1)
+train_cfg = dict(max_epochs=1210, val_interval=5)
 
 # optimizer
 optim_wrapper = dict(optimizer=dict(
     type='Adam',
-    lr=5e-4,
+    lr=5e-3,
 ))
 
 # learning policy
@@ -94,7 +94,12 @@ model = dict(
             'pretrain_models/hrnet_w32-36af842e.pth'),
     ),
     head=dict(
-        type='HeatmapHead',
+        #type='HeatmapHead',
+        type='HeatmapHeadWithClassifiers',
+        classifiers = [
+            dict(num_classes = 3, weight = 0.01, field_name = "gender"), #TODO: params of loss
+            dict(num_classes = 2, weight = 0.01, field_name = "shape"), #TODO: params of loss
+        ],
         in_channels=32,
         out_channels=17,
         deconv_out_channels=None,
@@ -143,7 +148,7 @@ train_dataloader = dict(
                 indices = [1,2,3,4,5,6,7,9,10,11,12,13,14,15,16,17,18],
                 data_root=data_root,
                 data_mode=data_mode,
-                ann_file='annotations/person_keypoints_val2017.json',
+                ann_file='annotations/person_keypoints_with_gender.json',
                 data_prefix=dict(img='images/val2017/'),
                 pipeline=train_pipeline,
             )
@@ -164,7 +169,7 @@ val_dataloader = dict(
                 indices=[1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
                 data_root=data_root,
                 data_mode=data_mode,
-                ann_file='annotations/person_keypoints_val2017.json',
+                ann_file='annotations/person_keypoints_with_gender.json',
                 # bbox_file=data_root + 'person_detection_results/COCO_val2017_detections_AP_H_56_person.json',
                 data_prefix=dict(img='images/val2017/'),
                 test_mode=True,
@@ -175,8 +180,7 @@ val_dataloader = dict(
                 indices=[1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
                 data_root=data_root,
                 data_mode=data_mode,
-                ann_file='annotations/person_keypoints_val2017.json',
-                # bbox_file=data_root + 'person_detection_results/COCO_val2017_detections_AP_H_56_person.json',
+                ann_file='annotations/person_keypoints_with_gender.json',
                 data_prefix=dict(img='images/val2017/'),
                 test_mode=True,
                 pipeline=val_pipeline,
@@ -186,7 +190,7 @@ val_dataloader = dict(
         # indices = [1,2,3,4,5,6,7,9,10,11,12,13,14,15,16,17,18],
         # data_root=data_root,
         # data_mode=data_mode,
-        # ann_file='annotations/person_keypoints_val2017.json',
+        # ann_file='annotations/person_keypoints_with_gender.json',
         # # bbox_file=data_root + 'person_detection_results/COCO_val2017_detections_AP_H_56_person.json',
         # data_prefix=dict(img='images/val2017/'),
         # test_mode=True,
@@ -197,7 +201,7 @@ test_dataloader = val_dataloader
 # evaluators
 # val_evaluator = dict(
 #     type='CocoMetric',
-#     #ann_file=data_root + 'annotations/person_keypoints_val2017.json'
+#     #ann_file=data_root + 'annotations/person_keypoints_with_gender.json'
 # )
 
 val_evaluator = [

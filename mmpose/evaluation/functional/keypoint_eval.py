@@ -321,6 +321,40 @@ def multilabel_classification_accuracy(pred: np.ndarray,
     return acc
 
 
+def atraf_classification_accuracy(pred: np.ndarray,
+                                       gt: np.ndarray,
+                                       mask: np.ndarray,
+                                       thr: float = 0.5) -> float:
+    """Get label classification accuracy.
+
+    Note:
+        - batch size: N
+        - label number: L
+
+    Args:
+        pred (np.ndarray[N, L]): model predicted scores.
+        gt (np.ndarray[N, L]): ground-truth labels.
+        mask (np.ndarray[N, 1]): reliability of
+            ground-truth labels.
+        thr (float): Threshold for calculating accuracy.
+
+    Returns:
+        float:  classification accuracy.
+    """
+    # we only compute accuracy on the samples with ground-truth of all labels.
+    valid = (mask > 0).min(axis=1) if mask.ndim == 2 else (mask > 0)
+    pred, gt = pred[valid], gt[valid]
+
+    if pred.shape[0] == 0:
+        acc = 0.0  # when no sample is with gt labels, set acc to 0.
+    else:
+        # The classification of a sample is regarded as correct
+        # only if it's correct for all labels.
+        acc = (((pred - thr) * (gt - thr)) > 0).all(axis=1).mean()
+    return acc
+
+
+
 def keypoint_mpjpe(pred: np.ndarray,
                    gt: np.ndarray,
                    mask: np.ndarray,

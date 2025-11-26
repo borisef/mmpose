@@ -9,5 +9,5 @@ from .vipnas_head import ViPNASHead
 
 __all__ = [
     'HeatmapHead', 'CPMHead', 'MSPNHead', 'ViPNASHead',
-    'AssociativeEmbeddingHead', 'CIDHead', 'InternetHead'
+    'AssociativeEmbeddingHead', 'CIDHead', 'InternetHead','HeatmapHeadWithClassifier'
 ]
