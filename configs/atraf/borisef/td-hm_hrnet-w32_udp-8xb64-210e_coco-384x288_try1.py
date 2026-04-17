@@ -1,7 +1,7 @@
 _base_ = ['/home/borisef/projects/mm/mmpose/configs/_base_/default_runtime.py']
 
 MY_BATCH = 1
-work_dir =  '/home/borisef/projects/mm/mmpose/tools/atraf/borisef/work_dirs/hrnet_UDP_w32_try1_'
+work_dir =  '/home/borisef/projects/mm/mmpose/tools/atraf/borisef/work_dirs/hrnet_UDP_w32_try2_'
 resume = True
 
 # runtime
@@ -97,13 +97,14 @@ model = dict(
         #type='HeatmapHead',
         type='HeatmapHeadWithClassifiers',
         classifiers = [
-            dict(num_classes = 3, weight = 0.01, field_name = "gender"), #TODO: params of loss
-            dict(num_classes = 2, weight = 0.01, field_name = "shape"), #TODO: params of loss
+            dict(num_classes = 3, weight = 0.5, field_name = "gender"), #TODO: params of loss
+            dict(num_classes = 2, weight = 0.5, field_name = "shape"), #TODO: params of loss
         ],
         in_channels=32,
         out_channels=17,
         deconv_out_channels=None,
         loss=dict(type='KeypointMSELoss', use_target_weight=True),
+        #TODO: define classifier's loss
         decoder=codec),
     test_cfg=dict(
         flip_test=True,

@@ -7,6 +7,9 @@ from .internet_head import InternetHead
 from .mspn_head import MSPNHead
 from .vipnas_head import ViPNASHead
 
+from mmpose.models.heads.heatmap_heads.atraf.heatmap_head_with_classifiers import HeatmapHeadWithClassifiers
+
+
 __all__ = [
     'HeatmapHead', 'CPMHead', 'MSPNHead', 'ViPNASHead',
     'AssociativeEmbeddingHead', 'CIDHead', 'InternetHead','HeatmapHeadWithClassifier'
