@@ -1,4 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+from transformers.tools.evaluate_agent import classifier
+
 from mmpose.models.heads.heatmap_heads import *
 import copy
 
@@ -31,9 +33,11 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
             num_classes = classifier['num_classes']
             classifier['avg_pool'] = nn.AdaptiveAvgPool2d((1, 1))
             self.cl_mod_list.append(classifier['avg_pool'])
-            classifier['fc1'] = nn.Linear(in_channels, 256, device = 'cuda:0')
+            #classifier['fc1'] = nn.Linear(in_channels, 256, device = 'cuda:0')
+            classifier['fc1'] = nn.Linear(in_channels, 256)
             self.cl_mod_list.append(classifier['fc1'])
-            classifier['fc2'] = nn.Linear(256, num_classes, device = 'cuda:0')
+            #classifier['fc2'] = nn.Linear(256, num_classes, device = 'cuda:0')
+            classifier['fc2'] = nn.Linear(256, num_classes)
             self.cl_mod_list.append(classifier['fc2'])
 
     def forward(self, x):
@@ -57,7 +61,8 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
                  train_cfg: ConfigType = {}) -> dict:
 
         pose_loss = HeatmapHead.loss(self, feats, batch_data_samples, train_cfg)
-        classification_loss = HeatmapHeadWithClassifiers.loss_only_class(self,feats, batch_data_samples, train_cfg)
+        #classification_loss = HeatmapHeadWithClassifiers.loss_only_class(self,feats, batch_data_samples, train_cfg)
+        classification_loss = HeatmapHeadWithClassifiers.loss_only_class_weighted(self, feats, batch_data_samples, train_cfg)
         # #F.cross_entropy(classification_probs, classification_labels)
 
         losses = pose_loss
@@ -85,6 +90,41 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
 
         return classification_probs
 
+    def loss_only_class_weighted(self, feats, batch_data_samples, train_cfg={}):
+        losses = dict()
+
+        for classifier in self.classifiers:
+            classification_probs = self.forward_only_class(feats, classifier)
+            classification_labels = []
+            field_name = classifier['field_name']
+            sample_weights = []  # NEW: collect per-sample weights
+
+            for bds in batch_data_samples:
+                temp_dict = bds.to_dict()
+                classification_labels.append(
+                    torch.tensor(temp_dict['raw_ann_info'][field_name],
+                                 device=feats[0].device)
+                )
+                # NEW: Get per-sample weight for this task
+                task_weights = temp_dict['raw_ann_info'].get('task_weights', {})
+                sample_weight = task_weights.get(f'{field_name}_weight', 1.0)
+                sample_weights.append(sample_weight)
+
+            gt_labels = torch.stack(classification_labels)
+            sample_weights = torch.tensor(sample_weights, device=feats[0].device)
+
+            # Apply per-sample weights to loss
+            classification_loss = F.cross_entropy(classification_probs, gt_labels,
+                                                  reduction='none')
+            classification_loss = (classification_loss * sample_weights).mean()
+
+            # Multiply by classifier weight (global weight)
+            weight = classifier['weight']
+            classifier_name = 'loss_' + field_name
+            losses[classifier_name] = classification_loss * weight
+
+        return losses
+
     def loss_only_class(self,
              feats: Tuple[Tensor],
              batch_data_samples: OptSampleList,
@@ -111,7 +151,7 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
             field_name = classifier['field_name']
             for bds in batch_data_samples:
                 temp_dict = bds.to_dict()
-                classification_labels.append(torch.tensor(temp_dict['raw_ann_info'][field_name], device='cuda:0')) #TODO: device from features
+                classification_labels.append(torch.tensor(temp_dict['raw_ann_info'][field_name], device = feats[0].device))
             gt_labels = torch.stack(classification_labels)
             classification_loss = F.cross_entropy(classification_probs, gt_labels)
             weight = classifier['weight']

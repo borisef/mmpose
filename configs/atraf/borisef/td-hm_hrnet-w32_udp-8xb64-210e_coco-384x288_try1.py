@@ -149,7 +149,7 @@ train_dataloader = dict(
                 indices = [1,2,3,4,5,6,7,9,10,11,12,13,14,15,16,17,18],
                 data_root=data_root,
                 data_mode=data_mode,
-                ann_file='annotations/person_keypoints_with_gender.json',
+                ann_file='annotations/w1_person_keypoints_with_gender.json',
                 data_prefix=dict(img='images/val2017/'),
                 pipeline=train_pipeline,
             )
