@@ -1,11 +1,11 @@
 _base_ = ['/home/borisef/projects/mm/mmpose/configs/_base_/default_runtime.py']
 
 MY_BATCH = 1
-work_dir =  '/home/borisef/projects/mm/mmpose/tools/atraf/borisef/work_dirs/hrnet_UDP_w32_try2_'
+work_dir =  '/home/borisef/projects/mm/mmpose/tools/atraf/borisef/work_dirs/hrnet_UDP_w32_try3'
 resume = True
 
 # runtime
-train_cfg = dict(max_epochs=1210, val_interval=5)
+train_cfg = dict(max_epochs=1210, val_interval=2)
 
 # optimizer
 optim_wrapper = dict(optimizer=dict(
@@ -33,13 +33,14 @@ auto_scale_lr = dict(base_batch_size=512)
 # hooks
 default_hooks = dict(
     timer=dict(type='IterTimerHook'),
-    logger=dict(type='LoggerHook', interval=50),
+    logger=dict(type='LoggerHook', interval=2),
     param_scheduler=dict(type='ParamSchedulerHook'),
     checkpoint=dict(
         type='CheckpointHook', interval=1,
-        save_best='coco/AP', rule='greater', max_keep_ckpts=1),
+        save_best='coco/AP', rule='greater', max_keep_ckpts=10),
     sampler_seed=dict(type='DistSamplerSeedHook'),
-    visualization=dict(type='PoseVisualizationHook', enable=True, interval =100, out_dir = work_dir + '/vvv'),
+    #visualization=dict(type='PoseVisualizationHook', enable=True, interval =2, out_dir = work_dir + '/vvv'),
+    visualization=dict(type='PoseVisualizationHookWithClassifiers', enable=True, interval=2, out_dir=work_dir + '/vvv'),
     badcase=dict(
         type='BadCaseAnalysisHook',
         enable=False,

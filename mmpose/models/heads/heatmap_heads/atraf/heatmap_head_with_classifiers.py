@@ -173,4 +173,4 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
 
 
 
-        return losses
+
