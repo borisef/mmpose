@@ -69,6 +69,55 @@ class PoseVisualizationHookWithClassifiers(PoseVisualizationHook):
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         return img_rgb
 
+    def _draw_classifiers_text(self, img, data_sample):
+        """Draw classifier predictions on image.
+
+        Args:
+            img (np.ndarray): Image in RGB format.
+            data_sample (PoseDataSample): Data sample with classifier predictions.
+
+        Returns:
+            np.ndarray: Image with classifier text drawn.
+        """
+        if not hasattr(data_sample, 'pred_classifiers'):
+            print(f"[DEBUG] No pred_classifiers attribute found. Attributes: {dir(data_sample)}")
+            return img
+
+        print(f"[DEBUG] Found pred_classifiers: {data_sample.pred_classifiers}")
+
+        line_height = 25
+        y_pos = 30
+
+        for field_name, pred_info in data_sample.pred_classifiers.items():
+            pred_class = pred_info.get('pred_class', -1)
+            pred_score = pred_info.get('pred_score', 0.0)
+            pred_label = pred_info.get('pred_label')
+            gt_class = pred_info.get('gt_class', None)
+            gt_label = pred_info.get('gt_label')
+
+            # Determine color: green if correct, red if wrong
+            is_correct = (gt_class is not None and pred_class == gt_class)
+            color = (0, 255, 0) if is_correct else (255, 0, 0)  # RGB format
+
+            # Format text with labels if available
+            # Format: "field_name: GT=0, Pred=1 (0.95); GT=M, Pred=W"
+            if gt_class is not None:
+                text = f"{field_name}: GT={gt_class}, Pred={pred_class} ({pred_score:.2f})"
+                # Add labels if available
+                if gt_label is not None and pred_label is not None:
+                    text += f"; GT={gt_label}, Pred={pred_label}"
+            else:
+                text = f"{field_name}: Pred={pred_class} ({pred_score:.2f})"
+                # Add label if available
+                if pred_label is not None:
+                    text += f"; Pred={pred_label}"
+
+            img = self._draw_text_on_image(img, text, position=(10, y_pos),
+                                         font_scale=0.6, thickness=1, color=color)
+            y_pos += line_height
+
+        return img
+
     def after_val_iter(self, runner: Runner, batch_idx: int, data_batch: dict,
                        outputs: Sequence[PoseDataSample]) -> None:
         """Run after every ``self.interval`` validation iterations.
@@ -94,12 +143,13 @@ class PoseVisualizationHookWithClassifiers(PoseVisualizationHook):
         img = mmcv.imfrombytes(img_bytes, channel_order='rgb')
         data_sample = outputs[0]
 
+        # Draw classifier predictions BEFORE merge_data_samples (preserves pred_classifiers)
+        img = self._draw_classifiers_text(img, data_sample)
+
         # revert the heatmap on the original image
         data_sample = merge_data_samples([data_sample])
 
         if total_curr_iter % self.interval == 0:
-            # Draw text on image
-            img = self._draw_text_on_image(img, "try text")
 
             self._visualizer.add_datasample(
                 os.path.basename(img_path) if self.show else 'val_img',
@@ -139,6 +189,10 @@ class PoseVisualizationHookWithClassifiers(PoseVisualizationHook):
             img_path = data_sample.get('img_path')
             img_bytes = fileio.get(img_path, backend_args=self.backend_args)
             img = mmcv.imfrombytes(img_bytes, channel_order='rgb')
+
+            # Draw classifier predictions BEFORE merge_data_samples (preserves pred_classifiers)
+            img = self._draw_classifiers_text(img, data_sample)
+
             data_sample = merge_data_samples([data_sample])
 
             out_file = None
@@ -152,8 +206,6 @@ class PoseVisualizationHookWithClassifiers(PoseVisualizationHook):
                 out_file = f'{out_file_name}_{index}.{postfix}'
                 out_file = os.path.join(self.out_dir, out_file)
 
-            # Draw text on image
-            img = self._draw_text_on_image(img, "try text")
 
             self._visualizer.add_datasample(
                 os.path.basename(img_path) if self.show else 'test_img',

@@ -1,6 +1,4 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from transformers.tools.evaluate_agent import classifier
-
 from mmpose.models.heads.heatmap_heads import *
 import copy
 
@@ -8,12 +6,10 @@ import copy
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
-from typing import Optional, Sequence, Tuple, Union
+from typing import Tuple
 
-from mmpose.registry import KEYPOINT_CODECS, MODELS
-from mmpose.utils.tensor_utils import to_numpy
-from mmpose.utils.typing import (ConfigType, Features, OptConfigType,
-                                 OptSampleList, Predictions)
+from mmpose.registry import MODELS
+from mmpose.utils.typing import (ConfigType, OptSampleList, Predictions)
 
 
 @MODELS.register_module()
@@ -58,8 +54,10 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
     def loss(self,
                  feats: Tuple[Tensor],
                  batch_data_samples: OptSampleList,
-                 train_cfg: ConfigType = {}) -> dict:
+                 train_cfg: ConfigType = None) -> dict:
 
+        if train_cfg is None:
+            train_cfg = {}
         pose_loss = HeatmapHead.loss(self, feats, batch_data_samples, train_cfg)
         #classification_loss = HeatmapHeadWithClassifiers.loss_only_class(self,feats, batch_data_samples, train_cfg)
         classification_loss = HeatmapHeadWithClassifiers.loss_only_class_weighted(self, feats, batch_data_samples, train_cfg)
@@ -90,7 +88,9 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
 
         return classification_probs
 
-    def loss_only_class_weighted(self, feats, batch_data_samples, train_cfg={}):
+    def loss_only_class_weighted(self, feats, batch_data_samples, train_cfg=None):
+        if train_cfg is None:
+            train_cfg = {}
         losses = dict()
 
         for classifier in self.classifiers:
@@ -128,7 +128,7 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
     def loss_only_class(self,
              feats: Tuple[Tensor],
              batch_data_samples: OptSampleList,
-             train_cfg: ConfigType = {}) -> dict:
+             train_cfg: ConfigType = None) -> dict:
         """Calculate losses from a batch of inputs and data samples.
 
         Args:
@@ -136,11 +136,13 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
             batch_data_samples (List[:obj:`PoseDataSample`]): The batch
                 data samples
             train_cfg (dict): The runtime config for training process.
-                Defaults to {}
+                Defaults to None
 
         Returns:
             dict: A dictionary of losses.
         """
+        if train_cfg is None:
+            train_cfg = {}
 
         # calculate losses
         losses = dict()
@@ -170,6 +172,70 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
             #     acc_class = torch.tensor(avg_acc, device="cuda:0")
             #     acc_str = "acc_" + field_name
             #     losses.update({acc_str: acc_class})
+
+    def predict(self,
+                feats: Tuple[Tensor],
+                batch_data_samples: OptSampleList,
+                test_cfg: ConfigType = None) -> Predictions:
+        """Predict results from features, including classifier predictions.
+
+        Args:
+            feats (Tuple[Tensor]): The multi-stage features
+            batch_data_samples (List[:obj:`PoseDataSample`]): The batch
+                data samples
+            test_cfg (dict): The runtime config for testing process.
+                Defaults to None
+
+        Returns:
+            Predictions: The pose predictions from parent class
+        """
+        if test_cfg is None:
+            test_cfg = {}
+        # Get predictions from parent HeatmapHead
+        preds = HeatmapHead.predict(self, feats, batch_data_samples, test_cfg)
+
+        # Handle flip_test case: feats is a list of feature tuples during TTA
+        # Extract the base features for classifier prediction
+        if test_cfg.get('flip_test', False) and isinstance(feats, list):
+            base_feats = feats[0]
+        else:
+            base_feats = feats
+
+        # Extract classifier predictions and store them
+        for classifier in self.classifiers:
+            classification_probs = self.forward_only_class(base_feats, classifier)
+            field_name = classifier['field_name']
+            labels = classifier.get('labels', None)  # Get optional labels
+
+            # Get predicted class and confidence scores
+            pred_classes = torch.argmax(classification_probs, dim=1)
+            pred_scores = torch.max(classification_probs, dim=1)[0]
+
+            # Store predictions in each data sample
+            for idx, data_sample in enumerate(batch_data_samples):
+                # Store classifier predictions in the data sample
+                if not hasattr(data_sample, 'pred_classifiers'):
+                    data_sample.pred_classifiers = {}
+
+                pred_class_idx = pred_classes[idx].item()
+                pred_label = labels[pred_class_idx] if labels else None
+
+                data_sample.pred_classifiers[field_name] = {
+                    'pred_class': pred_class_idx,
+                    'pred_label': pred_label,
+                    'pred_score': pred_scores[idx].item(),
+                    'all_probs': classification_probs[idx].detach().cpu().numpy()
+                }
+
+                # Also try to get ground truth if available
+                if hasattr(data_sample, 'raw_ann_info') and field_name in data_sample.raw_ann_info:
+                    gt_class_idx = data_sample.raw_ann_info[field_name]
+                    data_sample.pred_classifiers[field_name]['gt_class'] = gt_class_idx
+                    # Add ground truth label if available
+                    if labels:
+                        data_sample.pred_classifiers[field_name]['gt_label'] = labels[gt_class_idx]
+
+        return preds
 
 
 

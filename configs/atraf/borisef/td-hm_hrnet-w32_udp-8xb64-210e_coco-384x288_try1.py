@@ -5,7 +5,7 @@ work_dir =  '/home/borisef/projects/mm/mmpose/tools/atraf/borisef/work_dirs/hrne
 resume = True
 
 # runtime
-train_cfg = dict(max_epochs=1210, val_interval=2)
+train_cfg = dict(max_epochs=1210, val_interval=1)
 
 # optimizer
 optim_wrapper = dict(optimizer=dict(
@@ -98,8 +98,8 @@ model = dict(
         #type='HeatmapHead',
         type='HeatmapHeadWithClassifiers',
         classifiers = [
-            dict(num_classes = 3, weight = 0.5, field_name = "gender"), #TODO: params of loss
-            dict(num_classes = 2, weight = 0.5, field_name = "shape"), #TODO: params of loss
+            dict(num_classes = 3, weight = 0.5, field_name = "gender", labels = ["M", "W", "S"]), #TODO: params of loss
+            dict(num_classes = 2, weight = 0.5, field_name = "shape", labels = ["round", "rectangular"]), #TODO: params of loss
         ],
         in_channels=32,
         out_channels=17,
