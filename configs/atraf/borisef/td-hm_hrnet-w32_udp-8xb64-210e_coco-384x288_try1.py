@@ -98,8 +98,10 @@ model = dict(
         #type='HeatmapHead',
         type='HeatmapHeadWithClassifiers',
         classifiers = [
-            dict(num_classes = 3, weight = 0.5, field_name = "gender", labels = ["M", "W", "S"]), #TODO: params of loss
-            dict(num_classes = 2, weight = 0.5, field_name = "shape", labels = ["round", "rectangular"]), #TODO: params of loss
+            dict(num_classes = 3, weight = 0.5, field_name = "gender",labels = ["M", "W", "S"],
+                 num_convs = 2,  num_fcs = 2, conv_out_channels = 256, fc_out_channels = 256), #TODO: params of loss
+            dict(num_classes = 2, weight = 0.5, field_name = "shape", labels = ["round", "rectangular"],
+                 num_convs=1, num_fcs=1, conv_out_channels=128, fc_out_channels=64 ), #TODO: params of loss
         ],
         in_channels=32,
         out_channels=17,
