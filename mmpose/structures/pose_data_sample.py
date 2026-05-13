@@ -102,3 +102,5 @@ class PoseDataSample(BaseDataElement):
     @pred_fields.deleter
     def pred_fields(self):
         del self._pred_heatmaps
+
+

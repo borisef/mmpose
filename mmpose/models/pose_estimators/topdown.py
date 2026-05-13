@@ -117,6 +117,7 @@ class TopdownPoseEstimator(BasePoseEstimator):
         results = self.add_pred_to_datasample(batch_pred_instances,
                                               batch_pred_fields, data_samples)
 
+
         return results
 
     def add_pred_to_datasample(self, batch_pred_instances: InstanceList,

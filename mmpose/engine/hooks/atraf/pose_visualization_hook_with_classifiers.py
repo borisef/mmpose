@@ -80,10 +80,8 @@ class PoseVisualizationHookWithClassifiers(PoseVisualizationHook):
             np.ndarray: Image with classifier text drawn.
         """
         if not hasattr(data_sample, 'pred_classifiers'):
-            print(f"[DEBUG] No pred_classifiers attribute found. Attributes: {dir(data_sample)}")
             return img
 
-        print(f"[DEBUG] Found pred_classifiers: {data_sample.pred_classifiers}")
 
         line_height = 25
         y_pos = 30

@@ -291,6 +291,7 @@ class PoseLifter(BasePoseEstimator):
                                               batch_traj_instances,
                                               batch_traj_fields, data_samples)
 
+
         return results
 
     def add_pred_to_datasample(

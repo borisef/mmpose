@@ -99,8 +99,12 @@ model = dict(
         type='HeatmapHeadWithClassifiers',
         classifiers = [
             dict(num_classes = 3, weight = 0.5, field_name = "gender",labels = ["M", "W", "S"],
+                 loss_cfg=dict(type='CrossEntropyLoss', reduction='none'),
+                 #loss_cfg=dict(type='FocalLoss', gamma=2.0, reduction='none'),
+                 #loss_cfg=dict(type='BCEWithLogitsLoss', reduction='none'), # num classes = 1
                  num_convs = 2,  num_fcs = 2, conv_out_channels = 256, fc_out_channels = 256), #TODO: params of loss
             dict(num_classes = 2, weight = 0.5, field_name = "shape", labels = ["round", "rectangular"],
+                 loss_cfg=dict(type='FocalLoss', gamma=2.0, reduction='none'),
                  num_convs=1, num_fcs=1, conv_out_channels=128, fc_out_channels=64 ), #TODO: params of loss
         ],
         in_channels=32,
@@ -212,8 +216,14 @@ val_evaluator = [
     dict(type='PCKAccuracy', thr=0.2),
     dict(type='AUC'),
     dict(type='EPE'),
-    dict(type='CocoMetric')
-
+    dict(type='CocoMetric'),
+    dict(
+        type='ClassificationMetric',
+        classifiers=[
+            dict(field_name='gender', num_classes=3),
+            dict(field_name='shape', num_classes=2),
+        ]
+    )
 ]
 test_evaluator = val_evaluator
 

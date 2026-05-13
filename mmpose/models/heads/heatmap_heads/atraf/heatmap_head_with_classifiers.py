@@ -1,43 +1,148 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from mmpose.models.heads.heatmap_heads import *
 import copy
+import warnings
 
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 
 from mmpose.registry import MODELS
 from mmpose.utils.typing import (ConfigType, OptSampleList, Predictions)
 
 
-class ClassifierHead(nn.Module):
-    """A flexible per-task classification head inspired by MMDetection's
-    ConvFCBBoxHead pattern.
+# ── Loss factory ──────────────────────────────────────────────────────────────
 
-    Architecture (per head):
+def _build_classifier_loss(loss_cfg: dict) -> nn.Module:
+    """Build a classification loss from a plain config dict.
 
-        feature map
-            -> [num_convs x (Conv2d + BN + ReLU)]   # optional conv tower
-            -> AdaptiveAvgPool2d(1,1)                # always present
-            -> flatten
-            -> [num_fcs x (Linear + ReLU)]           # configurable depth
-            -> Linear(fc_out_channels, num_classes)  # output layer
-            -> Softmax
+    Supported types (case-insensitive):
+        - CrossEntropyLoss  : standard nn.CrossEntropyLoss (expects logits)
+        - BCEWithLogitsLoss : nn.BCEWithLogitsLoss for binary / multi-label
+        - FocalLoss         : built-in focal variant (no extra dependency)
+
+    All types honour a ``reduction`` key (default: 'none') and
+    a ``loss_weight`` key (default: 1.0, stored on the wrapper but
+    NOT forwarded to nn.* — weighting is done in compute_loss()).
 
     Args:
-        in_channels (int): Input feature channels (from backbone/neck).
-        num_classes (int): Number of output classes for this task.
-        field_name (str): Key used to pull GT labels from raw_ann_info.
-        weight (float): Loss weight scalar for this task. Default: 1.0.
-        num_convs (int): Number of conv layers before pooling. Default: 0.
-        num_fcs (int): Number of hidden FC layers (before the output FC).
-                       Must be >= 1. Default: 1.
-        conv_out_channels (int): Channel width of each conv layer. Default: 256.
-        fc_out_channels (int): Width of each hidden FC layer. Default: 256.
-        labels (list[str], optional): Human-readable label names for each
-                                      class index. Used at inference time.
+        loss_cfg (dict): Config dict with at least a ``type`` key.
+
+    Returns:
+        nn.Module: The constructed loss module.
     """
+    cfg = copy.deepcopy(loss_cfg)
+    loss_type = cfg.pop('type').lower().replace('_', '')
+    reduction  = cfg.pop('reduction', 'none')
+    cfg.pop('loss_weight', 1.0)   # consumed by ClassifierHead, not the module
+
+    if loss_type == 'crossentropyloss':
+        label_smoothing = cfg.pop('label_smoothing', 0.0)
+        return nn.CrossEntropyLoss(reduction=reduction,
+                                   label_smoothing=label_smoothing,
+                                   **cfg)
+
+    elif loss_type == 'bcewithlogitsloss':
+        return nn.BCEWithLogitsLoss(reduction=reduction, **cfg)
+
+    elif loss_type == 'focalloss':
+        gamma = cfg.pop('gamma', 2.0)
+        alpha = cfg.pop('alpha', None)
+        return _FocalLoss(gamma=gamma, alpha=alpha, reduction=reduction)
+
+    else:
+        raise ValueError(
+            f"Unknown classifier loss type '{loss_type}'. "
+            f"Supported: CrossEntropyLoss, BCEWithLogitsLoss, FocalLoss."
+        )
+
+
+class _FocalLoss(nn.Module):
+    """Focal Loss — no external dependencies required.
+
+    FL(p) = -alpha * (1 - p)^gamma * log(p)
+
+    Args:
+        gamma (float): Focusing parameter. Default: 2.0.
+        alpha (float | None): Class balancing scalar. Default: None.
+        reduction (str): 'none' | 'mean' | 'sum'. Default: 'none'.
+    """
+
+    def __init__(self,
+                 gamma: float = 2.0,
+                 alpha: Optional[float] = None,
+                 reduction: str = 'none'):
+        super().__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+        self.reduction = reduction
+
+    def forward(self, logits: Tensor, targets: Tensor) -> Tensor:
+        ce = F.cross_entropy(logits, targets, reduction='none')   # (N,)
+        pt = torch.exp(-ce)                                        # (N,)
+        focal = (1.0 - pt) ** self.gamma * ce
+        if self.alpha is not None:
+            focal = self.alpha * focal
+        if self.reduction == 'mean':
+            return focal.mean()
+        if self.reduction == 'sum':
+            return focal.sum()
+        return focal   # 'none' → (N,)
+
+
+# ── ClassifierHead ────────────────────────────────────────────────────────────
+
+class ClassifierHead(nn.Module):
+    """Flexible per-task classification head.
+
+    Architecture:
+
+        feature map
+            -> [num_convs x (Conv2d + BN + ReLU)]
+            -> AdaptiveAvgPool2d(1, 1)
+            -> flatten
+            -> [num_fcs x (Linear + ReLU)]
+            -> Linear(fc_out_channels, num_classes)   # raw logits
+                                                      # softmax only at predict()
+
+    Loss is configured via ``loss_cfg``:
+
+    .. code-block:: python
+
+        # Standard multi-class (default)
+        loss_cfg = dict(type='CrossEntropyLoss', reduction='none')
+
+        # With label smoothing
+        loss_cfg = dict(type='CrossEntropyLoss', reduction='none',
+                        label_smoothing=0.1)
+
+        # Binary task (single logit output, num_classes=1)
+        loss_cfg = dict(type='BCEWithLogitsLoss', reduction='none')
+
+        # Imbalanced classes
+        loss_cfg = dict(type='FocalLoss', gamma=2.0, reduction='none')
+
+    .. note::
+        ``reduction='none'`` is required for per-sample weighting via
+        ``task_weights`` in ``raw_ann_info``.  A ``UserWarning`` is raised
+        if any other reduction is used.
+
+    Args:
+        in_channels (int): Input feature channels.
+        num_classes (int): Number of output classes.
+        field_name (str): Key used to pull GT labels from raw_ann_info.
+        weight (float): Global loss weight scalar. Default: 1.0.
+        num_convs (int): Conv layers before pooling. Default: 0.
+        num_fcs (int): Hidden FC layers (>= 1). Default: 1.
+        conv_out_channels (int): Width of conv layers. Default: 256.
+        fc_out_channels (int): Width of hidden FC layers. Default: 256.
+        loss_cfg (dict | None): Loss config. Defaults to CrossEntropyLoss
+            with reduction='none'.
+        labels (list[str] | None): Human-readable class names (inference).
+    """
+
+    _default_loss_cfg = dict(type='CrossEntropyLoss', reduction='none')
 
     def __init__(self,
                  in_channels: int,
@@ -48,24 +153,38 @@ class ClassifierHead(nn.Module):
                  num_fcs: int = 1,
                  conv_out_channels: int = 256,
                  fc_out_channels: int = 256,
-                 labels: List[str] = None):
+                 loss_cfg: Optional[dict] = None,
+                 labels: Optional[List[str]] = None):
         super().__init__()
-        assert num_fcs >= 1, 'num_fcs must be >= 1 (need at least one hidden FC layer)'
+        assert num_fcs >= 1, 'num_fcs must be >= 1'
 
         self.field_name = field_name
         self.weight = weight
         self.labels = labels
-        self.num_convs = num_convs
-        self.num_fcs = num_fcs
-        self.conv_out_channels = conv_out_channels
-        self.fc_out_channels = fc_out_channels
+
+        # ── Loss module ───────────────────────────────────────────────────
+        resolved_cfg = copy.deepcopy(loss_cfg or self._default_loss_cfg)
+        self.loss_weight = resolved_cfg.get('loss_weight', 1.0)
+        self.loss_reduction = resolved_cfg.get('reduction', 'none')
+
+        if self.loss_reduction != 'none':
+            warnings.warn(
+                f"ClassifierHead '{field_name}': loss_cfg has "
+                f"reduction='{self.loss_reduction}'. Per-sample weighting "
+                f"via task_weights requires reduction='none'. "
+                f"Per-sample weights will be ignored.",
+                UserWarning,
+            )
+
+        self.loss_module = _build_classifier_loss(resolved_cfg)
 
         # ── Conv tower ────────────────────────────────────────────────────
         self.convs = nn.ModuleList()
         for i in range(num_convs):
             in_ch = in_channels if i == 0 else conv_out_channels
             self.convs.append(nn.Sequential(
-                nn.Conv2d(in_ch, conv_out_channels, kernel_size=3, padding=1, bias=False),
+                nn.Conv2d(in_ch, conv_out_channels,
+                          kernel_size=3, padding=1, bias=False),
                 nn.BatchNorm2d(conv_out_channels),
                 nn.ReLU(inplace=True),
             ))
@@ -74,14 +193,13 @@ class ClassifierHead(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
 
         # ── FC tower ──────────────────────────────────────────────────────
-        # First FC: from (conv_out_channels or in_channels) → fc_out_channels
         fc_in_channels = conv_out_channels if num_convs > 0 else in_channels
         self.fcs = nn.ModuleList()
         for i in range(num_fcs):
             in_ch = fc_in_channels if i == 0 else fc_out_channels
             self.fcs.append(nn.Linear(in_ch, fc_out_channels))
 
-        # ── Output layer ──────────────────────────────────────────────────
+        # ── Output logits ─────────────────────────────────────────────────
         self.fc_out = nn.Linear(fc_out_channels, num_classes)
 
         self._init_weights()
@@ -97,35 +215,47 @@ class ClassifierHead(nn.Module):
         nn.init.constant_(self.fc_out.bias, 0)
 
     def forward(self, x: Tensor) -> Tensor:
-        """
-        Args:
-            x (Tensor): Feature map of shape (N, C, H, W).
-
-        Returns:
-            Tensor: Class probabilities of shape (N, num_classes).
-        """
-        # Conv tower
+        """Returns raw logits (N, num_classes). No softmax."""
         for conv in self.convs:
             x = conv(x)
-
-        # Pool + flatten
         x = self.avg_pool(x)
         x = torch.flatten(x, 1)
-
-        # FC tower
         for fc in self.fcs:
             x = F.relu(fc(x))
+        return self.fc_out(x)
 
-        # Output
-        return F.softmax(self.fc_out(x), dim=1)
+    def compute_loss(self,
+                     logits: Tensor,
+                     gt_labels: Tensor,
+                     sample_weights: Optional[Tensor] = None) -> Tensor:
+        """Weighted scalar loss for this head.
 
+        Args:
+            logits (Tensor): Raw logits (N, num_classes).
+            gt_labels (Tensor): GT class indices (N,).
+            sample_weights (Tensor | None): Per-sample weights (N,).
+                Applied only when reduction='none'.
+
+        Returns:
+            Tensor: Scalar loss.
+        """
+        loss = self.loss_module(logits, gt_labels)
+
+        if self.loss_reduction == 'none':
+            if sample_weights is not None:
+                loss = loss * sample_weights
+            loss = loss.mean()
+
+        return loss * self.weight
+
+
+# ── HeatmapHeadWithClassifiers ────────────────────────────────────────────────
 
 @MODELS.register_module()
 class HeatmapHeadWithClassifiers(HeatmapHead):
-    """HeatmapHead extended with flexible per-task ClassifierHead branches.
+    """HeatmapHead with flexible per-task ClassifierHead branches.
 
-    Each entry in `classifiers` is a dict that maps directly to the
-    ClassifierHead constructor kwargs, e.g.:
+    Example config:
 
     .. code-block:: python
 
@@ -134,28 +264,26 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
                 field_name='gender',
                 num_classes=2,
                 weight=1.0,
-                num_convs=0,
-                num_fcs=1,
-                fc_out_channels=256,
+                loss_cfg=dict(type='CrossEntropyLoss', reduction='none'),
                 labels=['male', 'female'],
             ),
             dict(
                 field_name='age_group',
                 num_classes=4,
                 weight=0.5,
-                num_convs=2,        # extra conv tower for this task
-                num_fcs=2,          # deeper FC tower
-                conv_out_channels=128,
-                fc_out_channels=512,
+                num_convs=2,
+                num_fcs=2,
+                loss_cfg=dict(type='FocalLoss', gamma=2.0, reduction='none'),
                 labels=['child', 'young', 'adult', 'senior'],
             ),
+            dict(
+                field_name='is_occluded',
+                num_classes=1,          # single logit for binary BCE
+                weight=0.3,
+                loss_cfg=dict(type='BCEWithLogitsLoss', reduction='none'),
+                labels=['occluded'],
+            ),
         ]
-
-    Args:
-        in_channels (int): Input channels forwarded to HeatmapHead.
-        out_channels (int): Output channels forwarded to HeatmapHead.
-        classifiers (list[dict]): List of classifier head configs.
-        **kwargs: Remaining kwargs passed to HeatmapHead.
     """
 
     def __init__(self,
@@ -165,19 +293,43 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
                  **kwargs):
         super().__init__(in_channels, out_channels, **kwargs)
 
-        # Build one ClassifierHead per task
         self.classifier_heads = nn.ModuleList()
         for cfg in classifiers:
-            cfg = copy.deepcopy(cfg)
             self.classifier_heads.append(
-                ClassifierHead(in_channels=in_channels, **cfg)
+                ClassifierHead(in_channels=in_channels, **copy.deepcopy(cfg))
             )
 
-    # ── Forward helpers ───────────────────────────────────────────────────
+    # ── Helpers ───────────────────────────────────────────────────────────
 
-    def _forward_classifier(self, head: ClassifierHead, feats: Tuple[Tensor]) -> Tensor:
-        """Run a single ClassifierHead on the first feature level."""
+    def _forward_classifier(self,
+                             head: ClassifierHead,
+                             feats: Tuple[Tensor]) -> Tensor:
         return head(feats[0])
+
+    @staticmethod
+    def _extract_labels_and_weights(
+            field_name: str,
+            batch_data_samples: OptSampleList,
+            device) -> Tuple[Tensor, Tensor]:
+        labels, weights = [], []
+        for bds in batch_data_samples:
+            ann = bds.to_dict()['raw_ann_info']
+            labels.append(torch.tensor(ann[field_name], device=device))
+            task_weights = ann.get('task_weights', {})
+            weights.append(task_weights.get(f'{field_name}_weight', 1.0))
+        return torch.stack(labels), torch.tensor(weights, device=device)
+
+    def _classifier_losses(self,
+                           feats: Tuple[Tensor],
+                           batch_data_samples: OptSampleList) -> dict:
+        losses = {}
+        for head in self.classifier_heads:
+            logits = self._forward_classifier(head, feats)
+            gt_labels, sample_weights = self._extract_labels_and_weights(
+                head.field_name, batch_data_samples, feats[0].device)
+            losses[f'loss_{head.field_name}'] = head.compute_loss(
+                logits, gt_labels, sample_weights)
+        return losses
 
     # ── Training ──────────────────────────────────────────────────────────
 
@@ -185,42 +337,11 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
              feats: Tuple[Tensor],
              batch_data_samples: OptSampleList,
              train_cfg: ConfigType = None) -> dict:
-
         if train_cfg is None:
             train_cfg = {}
-
         losses = HeatmapHead.loss(self, feats, batch_data_samples, train_cfg)
         losses.update(self._classifier_losses(feats, batch_data_samples))
         return losses
-
-    def _classifier_losses(self,
-                           feats: Tuple[Tensor],
-                           batch_data_samples: OptSampleList) -> dict:
-        losses = {}
-        for head in self.classifier_heads:
-            probs = self._forward_classifier(head, feats)
-            gt_labels, sample_weights = self._extract_labels_and_weights(
-                head.field_name, batch_data_samples, feats[0].device)
-
-            per_sample_loss = F.cross_entropy(probs, gt_labels, reduction='none')
-            weighted_loss = (per_sample_loss * sample_weights).mean()
-
-            losses[f'loss_{head.field_name}'] = weighted_loss * head.weight
-        return losses
-
-    @staticmethod
-    def _extract_labels_and_weights(field_name: str,
-                                    batch_data_samples: OptSampleList,
-                                    device) -> Tuple[Tensor, Tensor]:
-        """Pull GT labels and optional per-sample weights from data samples."""
-        labels, weights = [], []
-        for bds in batch_data_samples:
-            ann = bds.to_dict()['raw_ann_info']
-            labels.append(torch.tensor(ann[field_name], device=device))
-            task_weights = ann.get('task_weights', {})
-            weights.append(task_weights.get(f'{field_name}_weight', 1.0))
-
-        return torch.stack(labels), torch.tensor(weights, device=device)
 
     # ── Inference ─────────────────────────────────────────────────────────
 
@@ -228,18 +349,17 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
                 feats: Tuple[Tensor],
                 batch_data_samples: OptSampleList,
                 test_cfg: ConfigType = None) -> Predictions:
-
         if test_cfg is None:
             test_cfg = {}
 
         preds = HeatmapHead.predict(self, feats, batch_data_samples, test_cfg)
 
-        # During TTA feats is a list of tuples — use the base (non-flipped) feats
-        base_feats = feats[0] if (test_cfg.get('flip_test', False)
-                                  and isinstance(feats, list)) else feats
+        base_feats = (feats[0] if (test_cfg.get('flip_test', False)
+                                   and isinstance(feats, list)) else feats)
 
         for head in self.classifier_heads:
-            probs = self._forward_classifier(head, base_feats)
+            logits = self._forward_classifier(head, base_feats)
+            probs = F.softmax(logits, dim=1)   # softmax only at inference
             pred_classes = torch.argmax(probs, dim=1)
             pred_scores = torch.max(probs, dim=1)[0]
 
@@ -250,12 +370,12 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
                 pred_class_idx = pred_classes[idx].item()
                 data_sample.pred_classifiers[head.field_name] = {
                     'pred_class': pred_class_idx,
-                    'pred_label': head.labels[pred_class_idx] if head.labels else None,
+                    'pred_label': (head.labels[pred_class_idx]
+                                   if head.labels else None),
                     'pred_score': pred_scores[idx].item(),
-                    'all_probs': probs[idx].detach().cpu().numpy(),
+                    'all_probs':  probs[idx].detach().cpu().numpy(),
                 }
 
-                # Ground truth (if available)
                 if (hasattr(data_sample, 'raw_ann_info')
                         and head.field_name in data_sample.raw_ann_info):
                     gt_idx = data_sample.raw_ann_info[head.field_name]

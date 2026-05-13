@@ -74,6 +74,7 @@ def merge_data_samples(data_samples: List[PoseDataSample]) -> PoseDataSample:
         gt_fields.set_data(dict(heatmaps=merged_heatmaps))
         merged.gt_fields = gt_fields
 
+
     return merged
 
 
