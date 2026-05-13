@@ -214,8 +214,11 @@ test_dataloader = val_dataloader
 
 val_evaluator = [
     dict(type='PCKAccuracy', thr=0.2),
+    dict(type='AtrafPCKAccuracy', kpt_indexes=[0,1,2,3], prefix='atraf_pck', thr=0.2),
     dict(type='AUC'),
+    dict(type='AtrafAUC', kpt_indexes=[0,1,2,3], prefix='atraf_auc'),
     dict(type='EPE'),
+    dict(type='AtrafEPE', kpt_indexes=[0,1,2,3], prefix='atraf_epe'),
     dict(type='CocoMetric'),
     dict(
         type='ClassificationMetric',
