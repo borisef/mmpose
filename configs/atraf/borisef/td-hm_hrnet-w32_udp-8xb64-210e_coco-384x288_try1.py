@@ -219,6 +219,9 @@ val_evaluator = [
     dict(type='AtrafAUC', kpt_indexes=[0,1,2,3], prefix='atraf_auc'),
     dict(type='EPE'),
     dict(type='AtrafEPE', kpt_indexes=[0,1,2,3], prefix='atraf_epe'),
+    # ATRAF recall and false-alarm-rate metrics
+    dict(type='Recall_Atraf', kpt_indexes=[0,1,2,3], prefix='atraf_recall', thr=0.2, score_threshold=0.5),
+    dict(type='FAR_atraf', kpt_indexes=[0,1,2,3], prefix='atraf_far', thr=0.2, score_threshold=0.5),
     dict(type='CocoMetric'),
     dict(
         type='ClassificationMetric',
