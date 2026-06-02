@@ -6,7 +6,7 @@ from mmengine.logging import MMLogger
 
 from mmpose.registry import METRICS
 from mmpose.evaluation.metrics import PCKAccuracy
-from mmpose.evaluation.functional.keypoint_eval import _calc_distances
+from mmpose.evaluation.functional.keypoint_eval import _calc_distances, _distance_acc
 
 
 @METRICS.register_module()
@@ -40,7 +40,8 @@ class Recall_Atraf(PCKAccuracy):
                  kpt_indexes: Optional[Sequence[int]] = None,
                  score_threshold: float = 0.5,
                  collect_device: str = 'cpu',
-                 prefix: Optional[str] = None) -> None:
+                 prefix: Optional[str] = None,
+                 twin_keypoints: Optional[Sequence[Sequence[int]]] = None) -> None:
         super().__init__(
             thr=thr,
             norm_item=norm_item,
@@ -48,6 +49,7 @@ class Recall_Atraf(PCKAccuracy):
             prefix=prefix)
         self.kpt_indexes = kpt_indexes
         self.score_threshold = score_threshold
+        self.twin_keypoints = twin_keypoints
 
     def process(self, data_batch: Sequence[dict],
                 data_samples: Sequence[dict]) -> None:
@@ -136,6 +138,24 @@ class Recall_Atraf(PCKAccuracy):
         """Compute recall and far given normalization factor array [N,2]."""
         # distances: [K, N]
         distances = _calc_distances(pred_coords, gt_coords, mask, norm_factor)
+        if self.twin_keypoints is not None:
+            distances_orig = distances.copy()
+            distances_combined = distances_orig.copy()
+            for pair in self.twin_keypoints:
+                i, j = pair
+                gt_swapped = gt_coords.copy()
+                gt_swapped[:, i, :] = gt_coords[:, j, :]
+                gt_swapped[:, j, :] = gt_coords[:, i, :]
+                mask_swapped = mask.copy()
+                mask_swapped[:, i] = mask[:, i] | mask[:, j]
+                mask_swapped[:, j] = mask[:, j] | mask[:, i]
+                distances_swapped = _calc_distances(pred_coords, gt_swapped, mask_swapped, norm_factor)
+                for idx in (i, j):
+                    orig = distances_orig[idx]
+                    swp = distances_swapped[idx]
+                    combined = np.where((orig != -1) & (swp != -1), np.minimum(orig, swp), np.where(orig != -1, orig, swp))
+                    distances_combined[idx] = combined
+            distances = distances_combined
         # valid positions
         valid = distances != -1  # [K, N]
         valid_t = valid.T  # [N, K]

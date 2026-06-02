@@ -7,6 +7,7 @@ from mmengine.logging import MMLogger
 from mmpose.registry import METRICS
 from mmpose.evaluation.metrics import AUC, EPE
 from mmpose.evaluation.functional import keypoint_auc, keypoint_epe
+from mmpose.evaluation.functional.keypoint_eval import _calc_distances, _distance_acc
 
 
 @METRICS.register_module()
@@ -60,6 +61,7 @@ class AtrafAUC(AUC):
                  norm_factor: float = 30,
                  num_thrs: int = 20,
                  kpt_indexes: Optional[Sequence[int]] = None,
+                 twin_keypoints: Optional[Sequence[Sequence[int]]] = None,
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None) -> None:
         super().__init__(
@@ -68,6 +70,7 @@ class AtrafAUC(AUC):
             collect_device=collect_device,
             prefix=prefix)
         self.kpt_indexes = kpt_indexes
+        self.twin_keypoints = twin_keypoints
 
     def process(self, data_batch: Sequence[dict],
                 data_samples: Sequence[dict]) -> None:
@@ -131,8 +134,41 @@ class AtrafAUC(AUC):
         metric_prefix = ' (filtered by kpt_indexes)' if self.kpt_indexes else ''
         logger.info(f'Evaluating {self.__class__.__name__}{metric_prefix}...')
 
-        auc = keypoint_auc(pred_coords, gt_coords, mask, self.norm_factor,
-                           self.num_thrs)
+        metric_prefix = ' (filtered by kpt_indexes)' if self.kpt_indexes else ''
+        logger.info(f'Evaluating {self.__class__.__name__}{metric_prefix}...')
+
+        if self.twin_keypoints is None:
+            auc = keypoint_auc(pred_coords, gt_coords, mask, self.norm_factor,
+                               self.num_thrs)
+        else:
+            # Compute AUC by computing avg_acc at multiple thresholds using combined distances
+            nor = np.tile(np.array([[self.norm_factor, self.norm_factor]]), (pred_coords.shape[0], 1))
+            # distances per keypoint: [K, N]
+            distances_orig = _calc_distances(pred_coords, gt_coords, mask, nor)
+            distances_combined = distances_orig.copy()
+            for pair in self.twin_keypoints:
+                i, j = pair
+                gt_swapped = gt_coords.copy()
+                gt_swapped[:, i, :] = gt_coords[:, j, :]
+                gt_swapped[:, j, :] = gt_coords[:, i, :]
+                mask_swapped = mask.copy()
+                mask_swapped[:, i] = mask[:, i] | mask[:, j]
+                mask_swapped[:, j] = mask[:, j] | mask[:, i]
+                distances_swapped = _calc_distances(pred_coords, gt_swapped, mask_swapped, nor)
+                for idx in (i, j):
+                    orig = distances_orig[idx]
+                    swp = distances_swapped[idx]
+                    combined = np.where((orig != -1) & (swp != -1), np.minimum(orig, swp), np.where(orig != -1, orig, swp))
+                    distances_combined[idx] = combined
+
+            thrs = [1.0 * i / self.num_thrs for i in range(self.num_thrs)]
+            avg_accs = []
+            for thr in thrs:
+                acc = np.array([_distance_acc(distances_combined[k], thr) for k in range(distances_combined.shape[0])])
+                valid_acc = acc[acc >= 0]
+                avg_accs.append(valid_acc.mean() if len(valid_acc) > 0 else 0.0)
+
+            auc = sum(avg_accs) / self.num_thrs
 
         metrics = dict()
         metrics['AUC'] = auc
@@ -186,12 +222,14 @@ class AtrafEPE(EPE):
 
     def __init__(self,
                  kpt_indexes: Optional[Sequence[int]] = None,
+                 twin_keypoints: Optional[Sequence[Sequence[int]]] = None,
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None) -> None:
         super().__init__(
             collect_device=collect_device,
             prefix=prefix)
         self.kpt_indexes = kpt_indexes
+        self.twin_keypoints = twin_keypoints
 
     def process(self, data_batch: Sequence[dict],
                 data_samples: Sequence[dict]) -> None:
@@ -255,7 +293,29 @@ class AtrafEPE(EPE):
         metric_prefix = ' (filtered by kpt_indexes)' if self.kpt_indexes else ''
         logger.info(f'Evaluating {self.__class__.__name__}{metric_prefix}...')
 
-        epe = keypoint_epe(pred_coords, gt_coords, mask)
+        if self.twin_keypoints is None:
+            epe = keypoint_epe(pred_coords, gt_coords, mask)
+        else:
+            # compute combined distances using normalization factor of ones
+            norm_ones = np.ones((pred_coords.shape[0], pred_coords.shape[2]), dtype=np.float32)
+            distances_orig = _calc_distances(pred_coords, gt_coords, mask, norm_ones)
+            distances_combined = distances_orig.copy()
+            for pair in self.twin_keypoints:
+                i, j = pair
+                gt_swapped = gt_coords.copy()
+                gt_swapped[:, i, :] = gt_coords[:, j, :]
+                gt_swapped[:, j, :] = gt_coords[:, i, :]
+                mask_swapped = mask.copy()
+                mask_swapped[:, i] = mask[:, i] | mask[:, j]
+                mask_swapped[:, j] = mask[:, j] | mask[:, i]
+                distances_swapped = _calc_distances(pred_coords, gt_swapped, mask_swapped, norm_ones)
+                for idx in (i, j):
+                    orig = distances_orig[idx]
+                    swp = distances_swapped[idx]
+                    combined = np.where((orig != -1) & (swp != -1), np.minimum(orig, swp), np.where(orig != -1, orig, swp))
+                    distances_combined[idx] = combined
+            distance_valid = distances_combined[distances_combined != -1]
+            epe = distance_valid.sum() / max(1, len(distance_valid))
 
         metrics = dict()
         metrics['EPE'] = epe

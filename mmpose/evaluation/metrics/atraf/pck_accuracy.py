@@ -7,6 +7,7 @@ from mmengine.logging import MMLogger
 from mmpose.registry import METRICS
 from mmpose.evaluation.metrics import PCKAccuracy
 from mmpose.evaluation.functional import keypoint_pck_accuracy
+from mmpose.evaluation.functional.keypoint_eval import _calc_distances, _distance_acc
 
 
 @METRICS.register_module()
@@ -64,6 +65,7 @@ class AtrafPCKAccuracy(PCKAccuracy):
                  thr: float = 0.05,
                  norm_item: Union[str, Sequence[str]] = 'bbox',
                  kpt_indexes: Optional[Sequence[int]] = None,
+                 twin_keypoints: Optional[Sequence[Sequence[int]]] = None,
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None) -> None:
         super().__init__(
@@ -72,6 +74,7 @@ class AtrafPCKAccuracy(PCKAccuracy):
             collect_device=collect_device,
             prefix=prefix)
         self.kpt_indexes = kpt_indexes
+        self.twin_keypoints = twin_keypoints
 
     def process(self, data_batch: Sequence[dict],
                 data_samples: Sequence[dict]) -> None:
@@ -194,8 +197,29 @@ class AtrafPCKAccuracy(PCKAccuracy):
             logger.info(f'Evaluating {self.__class__.__name__} '
                         f'(normalized by ``"bbox_size"``){metric_prefix}...')
 
-            _, pck, _ = keypoint_pck_accuracy(pred_coords, gt_coords, mask,
-                                              self.thr, norm_size_bbox)
+            if self.twin_keypoints is None:
+                _, pck, _ = keypoint_pck_accuracy(pred_coords, gt_coords, mask,
+                                                  self.thr, norm_size_bbox)
+            else:
+                distances_orig = _calc_distances(pred_coords, gt_coords, mask, norm_size_bbox)
+                distances_combined = distances_orig.copy()
+                for pair in self.twin_keypoints:
+                    i, j = pair
+                    gt_swapped = gt_coords.copy()
+                    gt_swapped[:, i, :] = gt_coords[:, j, :]
+                    gt_swapped[:, j, :] = gt_coords[:, i, :]
+                    mask_swapped = mask.copy()
+                    mask_swapped[:, i] = mask[:, i] | mask[:, j]
+                    mask_swapped[:, j] = mask[:, j] | mask[:, i]
+                    distances_swapped = _calc_distances(pred_coords, gt_swapped, mask_swapped, norm_size_bbox)
+                    for idx in (i, j):
+                        orig = distances_orig[idx]
+                        swp = distances_swapped[idx]
+                        combined = np.where((orig != -1) & (swp != -1), np.minimum(orig, swp), np.where(orig != -1, orig, swp))
+                        distances_combined[idx] = combined
+                acc = np.array([_distance_acc(distances_combined[k], self.thr) for k in range(distances_combined.shape[0])])
+                valid_acc = acc[acc >= 0]
+                pck = valid_acc.mean() if len(valid_acc) > 0 else 0.0
             metrics['PCK'] = pck
 
         if 'head' in self.norm_item:
@@ -206,8 +230,29 @@ class AtrafPCKAccuracy(PCKAccuracy):
             logger.info(f'Evaluating {self.__class__.__name__} '
                         f'(normalized by ``"head_size"``){metric_prefix}...')
 
-            _, pckh, _ = keypoint_pck_accuracy(pred_coords, gt_coords, mask,
-                                               self.thr, norm_size_head)
+            if self.twin_keypoints is None:
+                _, pckh, _ = keypoint_pck_accuracy(pred_coords, gt_coords, mask,
+                                                   self.thr, norm_size_head)
+            else:
+                distances_orig = _calc_distances(pred_coords, gt_coords, mask, norm_size_head)
+                distances_combined = distances_orig.copy()
+                for pair in self.twin_keypoints:
+                    i, j = pair
+                    gt_swapped = gt_coords.copy()
+                    gt_swapped[:, i, :] = gt_coords[:, j, :]
+                    gt_swapped[:, j, :] = gt_coords[:, i, :]
+                    mask_swapped = mask.copy()
+                    mask_swapped[:, i] = mask[:, i] | mask[:, j]
+                    mask_swapped[:, j] = mask[:, j] | mask[:, i]
+                    distances_swapped = _calc_distances(pred_coords, gt_swapped, mask_swapped, norm_size_head)
+                    for idx in (i, j):
+                        orig = distances_orig[idx]
+                        swp = distances_swapped[idx]
+                        combined = np.where((orig != -1) & (swp != -1), np.minimum(orig, swp), np.where(orig != -1, orig, swp))
+                        distances_combined[idx] = combined
+                acc = np.array([_distance_acc(distances_combined[k], self.thr) for k in range(distances_combined.shape[0])])
+                valid_acc = acc[acc >= 0]
+                pckh = valid_acc.mean() if len(valid_acc) > 0 else 0.0
             metrics['PCKh'] = pckh
 
         if 'torso' in self.norm_item:
@@ -230,8 +275,29 @@ class AtrafPCKAccuracy(PCKAccuracy):
                 logger.info(f'Evaluating {self.__class__.__name__} '
                             f'(normalized by ``"torso_size"``){metric_prefix}...')
 
-                _, tpck, _ = keypoint_pck_accuracy(valid_pred_coords, valid_gt_coords,
-                                                   valid_mask, self.thr, norm_size_torso)
+                if self.twin_keypoints is None:
+                    _, tpck, _ = keypoint_pck_accuracy(valid_pred_coords, valid_gt_coords,
+                                                       valid_mask, self.thr, norm_size_torso)
+                else:
+                    distances_orig = _calc_distances(valid_pred_coords, valid_gt_coords, valid_mask, norm_size_torso)
+                    distances_combined = distances_orig.copy()
+                    for pair in self.twin_keypoints:
+                        i, j = pair
+                        gt_swapped = valid_gt_coords.copy()
+                        gt_swapped[:, i, :] = valid_gt_coords[:, j, :]
+                        gt_swapped[:, j, :] = valid_gt_coords[:, i, :]
+                        mask_swapped = valid_mask.copy()
+                        mask_swapped[:, i] = valid_mask[:, i] | valid_mask[:, j]
+                        mask_swapped[:, j] = valid_mask[:, j] | valid_mask[:, i]
+                        distances_swapped = _calc_distances(valid_pred_coords, gt_swapped, mask_swapped, norm_size_torso)
+                        for idx in (i, j):
+                            orig = distances_orig[idx]
+                            swp = distances_swapped[idx]
+                            combined = np.where((orig != -1) & (swp != -1), np.minimum(orig, swp), np.where(orig != -1, orig, swp))
+                            distances_combined[idx] = combined
+                    acc = np.array([_distance_acc(distances_combined[k], self.thr) for k in range(distances_combined.shape[0])])
+                    valid_acc = acc[acc >= 0]
+                    tpck = valid_acc.mean() if len(valid_acc) > 0 else 0.0
                 metrics['tPCK'] = tpck
 
         return metrics

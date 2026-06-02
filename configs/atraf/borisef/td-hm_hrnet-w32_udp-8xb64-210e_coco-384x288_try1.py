@@ -222,6 +222,17 @@ val_evaluator = [
     # ATRAF recall and false-alarm-rate metrics
     dict(type='Recall_Atraf', kpt_indexes=[0,1,2,3], prefix='atraf_recall', thr=0.2, score_threshold=0.5),
     dict(type='FAR_atraf', kpt_indexes=[0,1,2,3], prefix='atraf_far', thr=0.2, score_threshold=0.5),
+    # Examples of twin_keypoints feature: allows keypoint i to match gt[j] or gt[i]
+    # Useful for symmetric keypoints like left/right body parts
+    # In COCO format: left_shoulder(5)-right_shoulder(6), left_elbow(7)-right_elbow(8), etc.
+    dict(type='AtrafPCKAccuracy', kpt_indexes=[0,1,2,3], prefix='atraf_pck_twin', thr=0.2,
+         twin_keypoints=[[0, 1], [2, 3]]),  # allows pred[0] to match both gt[0] and gt[1]
+    dict(type='AtrafAUC', kpt_indexes=[0,1,2,3], prefix='atraf_auc_twin',
+         twin_keypoints=[[0, 1], [2, 3]]),
+    dict(type='AtrafEPE', kpt_indexes=[0,1,2,3], prefix='atraf_epe_twin',
+         twin_keypoints=[[0, 1], [2, 3]]),
+    dict(type='Recall_Atraf', kpt_indexes=[0,1,2,3], prefix='atraf_recall_twin', thr=0.2, score_threshold=0.5,
+         twin_keypoints=[[0, 1], [2, 3]]),
     dict(type='CocoMetric'),
     dict(
         type='ClassificationMetric',

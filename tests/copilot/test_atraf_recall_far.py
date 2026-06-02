@@ -65,3 +65,23 @@ def test_far_atraf_wrapper():
 	assert any(k.startswith('FAR') for k in res.keys())
 
 
+def test_twin_keypoints_behavior():
+	# pred for kp0 is at kp1's gt location. Without twin, kp0 incorrect.
+	pred = np.array([[[20.0, 20.0], [20.0, 20.0]]], dtype=np.float32)
+	gt = np.array([[[10.0, 10.0], [20.0, 20.0]]], dtype=np.float32)
+	scores = np.array([[0.9, 0.1]], dtype=np.float32)
+
+	# Without twin, only kp1 is correct but has low score -> Recall=0.0
+	metric_no_twin = Recall_Atraf(thr=0.05, norm_item='bbox', score_threshold=0.5)
+	sample = make_sample(pred, gt, scores)
+	metric_no_twin.process([{}], [sample])
+	res_no_twin = metric_no_twin.compute_metrics(metric_no_twin.results)
+	assert pytest_float_equal(res_no_twin['Recall'], 0.0)
+
+	# With twin pair [0,1], kp0 is considered correct and has high score -> Recall=0.5
+	metric_twin = Recall_Atraf(thr=0.05, norm_item='bbox', score_threshold=0.5, twin_keypoints=[[0, 1]])
+	metric_twin.process([{}], [sample])
+	res_twin = metric_twin.compute_metrics(metric_twin.results)
+	assert pytest_float_equal(res_twin['Recall'], 0.5)
+
+
