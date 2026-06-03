@@ -225,7 +225,8 @@ val_evaluator = [
     dict(type='FAR_atraf', kpt_indexes=[0,1,2,3], prefix='atraf_far', thr=0.2, score_threshold=0.5),
     # Smart_F1: scans score thresholds in [0,1] and picks the threshold
     # that maximizes F1. It returns both `SmartF1` and `SmartThreshold`.
-    dict(type='Smart_F1', kpt_indexes=[0,1,2,3], prefix='atraf_smart', thr=0.2, num_steps=101),
+    dict(type='Smart_F1', kpt_indexes=[0,1,2,3], prefix='atraf_smart',
+         thr=0.2, num_steps=101, generate_chart=True, chart_images_folder=work_dir + '/smart_f1_charts'),
     # Examples of twin_keypoints feature: allows keypoint i to match gt[j] or gt[i]
     # Useful for symmetric keypoints like left/right body parts
     # In COCO format: left_shoulder(5)-right_shoulder(6), left_elbow(7)-right_elbow(8), etc.

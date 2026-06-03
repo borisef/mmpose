@@ -9,10 +9,11 @@ from .keypoint_partition_metric import KeypointPartitionMetric
 from .posetrack18_metric import PoseTrack18Metric
 from .simple_keypoint_3d_metrics import SimpleMPJPE
 from .atraf import ClassificationMetric
+from .atraf import Smart_F1
 
 __all__ = [
     'CocoMetric', 'PCKAccuracy', 'MpiiPCKAccuracy', 'JhmdbPCKAccuracy', 'AUC',
     'EPE', 'NME', 'PoseTrack18Metric', 'CocoWholeBodyMetric',
     'KeypointPartitionMetric', 'MPJPE', 'InterHandMetric', 'SimpleMPJPE',
-    'ClassificationMetric'
+    'ClassificationMetric', 'Smart_F1'
 ]
