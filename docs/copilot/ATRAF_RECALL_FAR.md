@@ -43,14 +43,42 @@ val_evaluator = [
 
 This document describes two new ATRAF metrics added to mmpose:
 
-- `Recall_Atraf`: fraction of correct keypoints (distance < thr) whose
-  predicted keypoint score > score_threshold.
-- `FAR_atraf`: fraction of incorrect keypoints (distance >= thr) whose
-  predicted keypoint score > score_threshold.
+- `Recall_Atraf`: Recall = (Correct & High-score) / Total Correct
+  Portion of correct keypoints (distance < thr) with predicted keypoint score > score_threshold.
+  
+- `FAR_atraf` (False Alarm Rate): FAR = (Incorrect & High-score) / Total High-score
+  Portion of high-score detections that are incorrect (distance >= thr).
 
 Both metrics accept the same parameters as `AtrafPCKAccuracy` plus a
 `score_threshold` float (default 0.5). They support `norm_item` modes
 (`'bbox'`, `'head'`, `'torso'`) and optional `kpt_indexes` filtering.
+
+## Mathematical Formulation
+
+For a set of detected keypoints, they are partitioned into 4 groups:
+
+| Group | Correctness | Score | Count |
+|-------|-------------|-------|-------|
+| A | Correct (dist < thr) | High (> threshold) | n_ch |
+| B | Incorrect (dist >= thr) | High (> threshold) | n_ih |
+| C | Correct (dist < thr) | Low (<= threshold) | n_cl |
+| D | Incorrect (dist >= thr) | Low (<= threshold) | n_il |
+
+**Recall** = n_ch / (n_ch + n_cl) = Correct ∩ High-score / Total Correct keypoints
+
+**FAR** = n_ih / (n_ch + n_ih) = Incorrect ∩ High-score / Total High-score detections
+
+## Example with 110 Keypoints
+
+Given:
+- 50: Correct & High-score
+- 30: Incorrect & High-score
+- 20: Correct & Low-score
+- 10: Incorrect & Low-score
+
+**Calculations:**
+- Recall = 50 / (50 + 20) = 50/70 ≈ 0.714286 (71.4% of correct predictions are high-confidence)
+- FAR = 30 / (50 + 30) = 30/80 = 0.375 (37.5% of high-score detections are false alarms)
 
 Usage example (config):
 

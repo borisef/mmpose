@@ -16,8 +16,8 @@ class Recall_Atraf(PCKAccuracy):
     Recall: portion of correct keypoints (distance < thr) with
     predicted keypoint score > score_threshold.
 
-    FAR: portion of incorrect keypoints (distance >= thr) with
-    predicted keypoint score > score_threshold.
+    FAR (False Alarm Rate): portion of high-score detections that are
+    incorrect (distance >= thr). FAR = (Incorrect & High-score) / Total High-score.
 
     Args:
         thr(float): Threshold of PCK calculation. Default: 0.05.
@@ -166,11 +166,14 @@ class Recall_Atraf(PCKAccuracy):
         # pred_scores: [N, K]
         score_mask = pred_scores > self.score_threshold
 
+        # Recall: portion of correct keypoints with high score
         num_correct = int(correct.sum())
         recall = float(((correct) & score_mask).sum() / num_correct) if num_correct > 0 else 0.0
 
-        num_incorrect = int(incorrect.sum())
-        far = float(((incorrect) & score_mask).sum() / num_incorrect) if num_incorrect > 0 else 0.0
+        # FAR (False Alarm Rate): portion of high-score detections that are incorrect
+        # FAR = (Incorrect & High-score) / Total High-score detections
+        num_high_score = int(score_mask.sum())
+        far = float(((incorrect) & score_mask).sum() / num_high_score) if num_high_score > 0 else 0.0
 
         return recall, far
 
