@@ -38,6 +38,9 @@ def test_recall_far_all_correct():
 	assert 'Recall' in res and 'FAR' in res
 	assert pytest_float_equal(res['Recall'], 1.0)
 	assert pytest_float_equal(res['FAR'], 0.0)
+	# Precision and F1 should be 1.0 when all high-score detections are correct
+	assert pytest_float_equal(res['Precision'], 1.0)
+	assert pytest_float_equal(res['F1'], 1.0)
 
 
 def test_recall_far_one_wrong_high_score():
@@ -56,6 +59,10 @@ def test_recall_far_one_wrong_high_score():
 	res = metric.compute_metrics(metric.results)
 	assert pytest_float_equal(res['Recall'], 1.0)
 	assert pytest_float_equal(res['FAR'], 0.5)
+	# Precision = correct_high / total_high = 1/2 = 0.5
+	assert pytest_float_equal(res['Precision'], 0.5)
+	# F1 = 2 * P * R / (P + R) = 2 * 0.5 * 1 / 1.5 = 0.666666...
+	assert pytest_float_equal(res['F1'], 2.0 * 0.5 * 1.0 / (0.5 + 1.0))
 
 
 def test_far_atraf_wrapper():
@@ -82,12 +89,19 @@ def test_twin_keypoints_behavior():
 	metric_no_twin.process([{}], [sample])
 	res_no_twin = metric_no_twin.compute_metrics(metric_no_twin.results)
 	assert pytest_float_equal(res_no_twin['Recall'], 0.0)
+	# Without twin: one high-score incorrect -> precision 0/1 = 0.0, F1 = 0.0
+	assert pytest_float_equal(res_no_twin['Precision'], 0.0)
+	assert pytest_float_equal(res_no_twin['F1'], 0.0)
 
 	# With twin pair [0,1], kp0 is considered correct and has high score -> Recall=0.5
 	metric_twin = Recall_Atraf(thr=0.05, norm_item='bbox', score_threshold=0.5, twin_keypoints=[[0, 1]])
 	metric_twin.process([{}], [sample])
 	res_twin = metric_twin.compute_metrics(metric_twin.results)
 	assert pytest_float_equal(res_twin['Recall'], 0.5)
+	# With twin: total_high_score=1 (kp0), correct_high=1 -> precision=1.0
+	assert pytest_float_equal(res_twin['Precision'], 1.0)
+	# F1 = 2 * 1.0 * 0.5 / (1.5) = 0.666666...
+	assert pytest_float_equal(res_twin['F1'], 2.0 * 1.0 * 0.5 / (1.0 + 0.5))
 
 
 def test_recall_far_110_keypoints_exact_scenario():
@@ -141,7 +155,14 @@ def test_recall_far_110_keypoints_exact_scenario():
 	expected_recall = 50.0 / 70.0  # 0.714286
 	expected_far = 30.0 / 80.0      # 0.375
 
+	expected_precision = 50.0 / 80.0  # 0.625
+	expected_f1 = 2.0 * expected_precision * expected_recall / (expected_precision + expected_recall)  # 2/3
+
 	assert pytest_float_equal(res['Recall'], expected_recall, eps=1e-5), \
 		f"Expected Recall={expected_recall}, got {res['Recall']}"
 	assert pytest_float_equal(res['FAR'], expected_far, eps=1e-5), \
 		f"Expected FAR={expected_far}, got {res['FAR']}"
+	assert pytest_float_equal(res['Precision'], expected_precision, eps=1e-5), \
+		f"Expected Precision={expected_precision}, got {res['Precision']}"
+	assert pytest_float_equal(res['F1'], expected_f1, eps=1e-5), \
+		f"Expected F1={expected_f1}, got {res['F1']}"
