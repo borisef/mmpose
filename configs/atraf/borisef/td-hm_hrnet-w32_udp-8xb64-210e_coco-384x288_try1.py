@@ -6,6 +6,7 @@ resume = True
 
 # runtime
 train_cfg = dict(max_epochs=1210, val_interval=1)
+    # Confusion matrix visualization for classifier heads
 
 # optimizer
 optim_wrapper = dict(optimizer=dict(
@@ -161,7 +162,7 @@ train_dataloader = dict(
                 pipeline=train_pipeline,
             )
         ]*10
-    )
+    ),
 )
 val_dataloader = dict(
     batch_size=MY_BATCH,
@@ -241,10 +242,22 @@ val_evaluator = [
     dict(type='CocoMetric'),
     dict(
         type='ClassificationMetric',
+        prefix = "a",
         classifiers=[
             dict(field_name='gender', num_classes=3),
             dict(field_name='shape', num_classes=2),
         ]
+    ),
+    # Confusion matrix visualization for classifier heads
+    dict(
+        type='ClassificationMetricConfusionMatrix',
+        prefix = "b",
+        classifiers=[
+            dict(field_name='gender', num_classes=3),
+            dict(field_name='shape', num_classes=2),
+        ],
+        generate_chart=True,
+        chart_images_folder=work_dir + '/confusion_matrices'
     )
 ]
 test_evaluator = val_evaluator

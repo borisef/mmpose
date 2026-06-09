@@ -1,10 +1,11 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from .classification_metric import ClassificationMetric
+from .classification_confusion import ClassificationMetricConfusionMatrix
 from .pck_accuracy import AtrafPCKAccuracy
 from .auc_epe import AtrafAUC, AtrafEPE
 from .recall_far import Recall_Atraf, FAR_atraf
 from .smart_f1 import Smart_F1
 
-__all__ = ['ClassificationMetric', 'AtrafPCKAccuracy', 'AtrafAUC', 'AtrafEPE',
+__all__ = ['ClassificationMetric', 'ClassificationMetricConfusionMatrix', 'AtrafPCKAccuracy', 'AtrafAUC', 'AtrafEPE',
            'Recall_Atraf', 'FAR_atraf', 'Smart_F1']
 
