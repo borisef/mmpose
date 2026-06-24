@@ -29,6 +29,21 @@ try:
     _TORCH_AVAILABLE = True
 except Exception:
     pass
+def _get_chart_step(fallback=None):
+    """Return a resume-safe TensorBoard step (current training epoch).
+
+    Reads 'epoch' from MMEngine's MessageHub, which the runner restores from the
+    checkpoint on resume. Falls back to ``fallback`` (e.g. an internal counter)
+    when the info is unavailable (e.g. standalone test runs).
+    """
+    try:
+        from mmengine.logging import MessageHub
+        step = MessageHub.get_current_instance().get_info('epoch', None)
+        if step is not None:
+            return int(step)
+    except Exception:
+        pass
+    return fallback
 def _save_image_to_tensorboard(image_path, log_dir, tag, global_step=None):
     """Save image to TensorBoard. Handles conversion from PNG to proper tensor format."""
     if not _TB_AVAILABLE:
@@ -225,7 +240,12 @@ class Smart_F1(PCKAccuracy):
                 out_path = os.path.join(out_folder, f'{name}.png')
             # plot Precision vs Recall
             fig, ax = plt.subplots(figsize=(6, 6))
-            ax.plot(recalls, precisions, '-o', markersize=3)
+            # omit degenerate (0, 0) points from the plotted curve (high score
+            # thresholds where precision is 0/0 and recall is 0)
+            rec_arr = np.asarray(recalls)
+            prec_arr = np.asarray(precisions)
+            keep = ~((rec_arr == 0) & (prec_arr == 0))
+            ax.plot(rec_arr[keep], prec_arr[keep], '-o', markersize=3)
             # mark best
             best_idx = int(np.argmin(np.abs(thresholds - best_t)))
             ax.plot(recalls[best_idx], precisions[best_idx], 'ro', markersize=8)
@@ -234,6 +254,10 @@ class Smart_F1(PCKAccuracy):
             ax.set_xlabel('Recall')
             ax.set_ylabel('Precision')
             ax.set_title(f'Smart F1 ({norm_name})')
+            # keep axes anchored at the origin even though the (0, 0) point is
+            # omitted from the plotted curve
+            ax.set_xlim(left=0)
+            ax.set_ylim(bottom=0)
             ax.grid(True)
             fig.tight_layout()
             fig.savefig(out_path)
@@ -263,6 +287,9 @@ class Smart_F1(PCKAccuracy):
         if not hasattr(self, '_chart_step'):
             self._chart_step = 0
         chart_step = int(self._chart_step)
+        # Prefer the resume-safe training epoch as the chart/TensorBoard step;
+        # keep the internal counter as a fallback for standalone test runs.
+        self._chart_step = _get_chart_step(fallback=chart_step)
         if 'bbox' in self.norm_item:
             norm_size_bbox = np.concatenate([r['bbox_size'] for r in results])
             logger.info(f'Evaluating {self.__class__.__name__} (normalized by ``"bbox_size"``){metric_prefix}...')

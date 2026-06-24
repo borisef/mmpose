@@ -10,7 +10,7 @@ from mmpose.registry import METRICS
 from mmpose.structures import PoseDataSample
 
 # reuse tensorboard helper from smart_f1 to ensure consistent logging
-from mmpose.evaluation.metrics.atraf.smart_f1 import _save_image_to_tensorboard, _TB_AVAILABLE, plt
+from mmpose.evaluation.metrics.atraf.smart_f1 import _save_image_to_tensorboard, _TB_AVAILABLE, plt, _get_chart_step
 
 
 @METRICS.register_module()
@@ -132,6 +132,9 @@ class ClassificationMetricConfusionMatrix(BaseMetric):
         if not hasattr(self, '_chart_step'):
             self._chart_step = 0
         chart_step = int(self._chart_step)
+        # Prefer the resume-safe training epoch as the chart/TensorBoard step;
+        # keep the internal counter as a fallback for standalone test runs.
+        self._chart_step = _get_chart_step(fallback=chart_step)
 
         for clf in self.classifiers:
             field_name = clf['field_name']
@@ -183,6 +186,11 @@ class ClassificationMetricConfusionMatrix(BaseMetric):
             # generate and log confusion matrix image
             # attach chart step attribute used by helper
             self._generate_and_log_confusion(cm, field_name)
+
+        # Reset for next evaluation epoch.
+        for field_name in self.classifier_names:
+            self.classifier_results[field_name] = {
+                'pred_classes': [], 'gt_classes': []}
 
         # increment chart step for next invocation
         self._chart_step = chart_step + 1

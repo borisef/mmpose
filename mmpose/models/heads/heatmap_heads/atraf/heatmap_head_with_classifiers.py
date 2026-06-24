@@ -154,13 +154,16 @@ class ClassifierHead(nn.Module):
                  conv_out_channels: int = 256,
                  fc_out_channels: int = 256,
                  loss_cfg: Optional[dict] = None,
-                 labels: Optional[List[str]] = None):
+                 labels: Optional[List[str]] = None,
+                 lr_schedule: Optional[List[Tuple[int, float]]] = None):
         super().__init__()
         assert num_fcs >= 1, 'num_fcs must be >= 1'
 
         self.field_name = field_name
         self.weight = weight
         self.labels = labels
+        self.lr_schedule = (sorted(lr_schedule, key=lambda x: x[0])
+                            if lr_schedule else None)
 
         # ── Loss module ───────────────────────────────────────────────────
         resolved_cfg = copy.deepcopy(loss_cfg or self._default_loss_cfg)

@@ -158,6 +158,11 @@ class ClassificationMetric(BaseMetric):
                 metrics[f'classifier/{field_name}/f1_class_{class_idx}'] = \
                     f1_scores[class_idx]
 
+        # Reset for next evaluation epoch.
+        for field_name in self.classifier_names:
+            self.classifier_results[field_name] = {
+                'pred_classes': [], 'gt_classes': []}
+
         return metrics
 
 

@@ -1,11 +1,11 @@
 _base_ = ['/home/borisef/projects/mm/mmpose/configs/_base_/default_runtime.py']
 
 MY_BATCH = 1
-work_dir =  '/home/borisef/projects/mm/mmpose/tools/atraf/borisef/work_dirs/hrnet_UDP_w32_try3'
+work_dir =  '/home/borisef/projects/mm/mmpose/tools/atraf/borisef/work_dirs/hrnet_UDP_w32_try4'
 resume = True
 
 # runtime
-train_cfg = dict(max_epochs=1210, val_interval=1)
+train_cfg = dict(max_epochs=40, val_interval=1)
     # Confusion matrix visualization for classifier heads
 
 # optimizer
@@ -22,14 +22,20 @@ param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=210,
-        milestones=[170, 200],
+        end=40,
+        milestones=[15, 18],
         gamma=0.1,
         by_epoch=True)
 ]
 
 # automatically scaling LR based on the actual training batch size
 auto_scale_lr = dict(base_batch_size=512)
+
+custom_hooks = [
+    dict(type='ClassifierLRSchedulerHook'),
+    dict(type='KeypointFreezeHook', freeze_epoch=20),
+]
+
 
 # hooks
 default_hooks = dict(
@@ -101,12 +107,14 @@ model = dict(
         classifiers = [
             dict(num_classes = 3, weight = 0.5, field_name = "gender",labels = ["M", "W", "S"],
                  loss_cfg=dict(type='CrossEntropyLoss', reduction='none'),
-                 #loss_cfg=dict(type='FocalLoss', gamma=2.0, reduction='none'),
-                 #loss_cfg=dict(type='BCEWithLogitsLoss', reduction='none'), # num classes = 1
-                 num_convs = 2,  num_fcs = 2, conv_out_channels = 256, fc_out_channels = 256), #TODO: params of loss
+                 num_convs = 2,  num_fcs = 2, conv_out_channels = 256, fc_out_channels = 256,
+                 lr_schedule=[(0, 0.0), (20, 0.001)],
+                 ),
             dict(num_classes = 2, weight = 0.5, field_name = "shape", labels = ["round", "rectangular"],
                  loss_cfg=dict(type='FocalLoss', gamma=2.0, reduction='none'),
-                 num_convs=1, num_fcs=1, conv_out_channels=128, fc_out_channels=64 ), #TODO: params of loss
+                 num_convs=1, num_fcs=1, conv_out_channels=128, fc_out_channels=64,
+                 lr_schedule=[(0, 0.0), (20, 0.001)],
+                 ),
         ],
         in_channels=32,
         out_channels=17,
