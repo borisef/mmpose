@@ -302,6 +302,9 @@ class HeatmapHeadWithClassifiers(HeatmapHead):
                 ClassifierHead(in_channels=in_channels, **copy.deepcopy(cfg))
             )
 
+    def forward(self, feats: Tuple[Tensor]) -> Tensor:
+        return super().forward(feats)
+
     # ── Helpers ───────────────────────────────────────────────────────────
 
     def _forward_classifier(self,
