@@ -1,7 +1,7 @@
 _base_ = ['/home/borisef/projects/mm/mmpose/configs/_base_/default_runtime.py']
 
 MY_BATCH = 1
-work_dir =  '/home/borisef/projects/mm/mmpose/tools/atraf/borisef/work_dirs/hrnet_UDP_w32_try2'
+work_dir =  '/home/borisef/projects/mm/mmpose/tools/atraf/borisef/work_dirs/hrnet_UDP_w32_try_changes'
 resume = True
 
 # runtime
@@ -44,7 +44,9 @@ default_hooks = dict(
     param_scheduler=dict(type='ParamSchedulerHook'),
     checkpoint=dict(
         type='CheckpointHook', interval=1,
-        save_best='coco/AP', rule='greater', max_keep_ckpts=10),
+        save_best=['smart_oob/SmartF2', 'smart_oob/SmartF1', 'pck_no_oob/PCK'],
+        rule=['greater', 'greater', 'greater'],
+        max_keep_ckpts=10),
     sampler_seed=dict(type='DistSamplerSeedHook'),
     #visualization=dict(type='PoseVisualizationHook', enable=True, interval =2, out_dir = work_dir + '/vvv'),
     visualization=dict(type='PoseVisualizationHookWithClassifiers', enable=True, interval=2, out_dir=work_dir + '/vvv'),

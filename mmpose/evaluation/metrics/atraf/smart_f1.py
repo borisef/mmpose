@@ -336,6 +336,7 @@ class Smart_F1(PCKAccuracy):
             metrics['SmartF1'] = float(best_f1)
             metrics['SmartThreshold'] = float(best_t)
             metrics['SmartAccuracy'] = float(best_acc)
+            metrics['SmartF2'] = float((best_f1 + best_acc) / 2.0)
             # pass chart_step via self attribute; _generate_and_log_chart will use it
             self._generate_and_log_chart(recalls, precisions, thresholds, best_t, best_f1, 'bbox')
         if 'head' in self.norm_item:
@@ -357,6 +358,7 @@ class Smart_F1(PCKAccuracy):
             metrics['SmartF1h'] = float(best_f1)
             metrics['SmartThresholdh'] = float(best_t)
             metrics['SmartAccuracyh'] = float(best_acc)
+            metrics['SmartF2h'] = float((best_f1 + best_acc) / 2.0)
             self._generate_and_log_chart(recalls, precisions, thresholds, best_t, best_f1, 'head')
         if 'torso' in self.norm_item:
             valid_torso_results = [r for r in results if r.get('torso_size') is not None]
@@ -384,6 +386,7 @@ class Smart_F1(PCKAccuracy):
                 metrics['SmartF1t'] = float(best_f1)
                 metrics['SmartThresholdt'] = float(best_t)
                 metrics['SmartAccuracyt'] = float(best_acc)
+                metrics['SmartF2t'] = float((best_f1 + best_acc) / 2.0)
                 self._generate_and_log_chart(recalls, precisions, thresholds, best_t, best_f1, 'torso')
 
         # increment chart step for next invocation
