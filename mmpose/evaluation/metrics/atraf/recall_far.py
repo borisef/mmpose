@@ -39,6 +39,9 @@ class Recall_Atraf(PCKAccuracy):
                  norm_item: Union[str, Sequence[str]] = 'bbox',
                  kpt_indexes: Optional[Sequence[int]] = None,
                  score_threshold: float = 0.5,
+                 ignore_gt_out_of_image: bool = False,
+                 ignore_gt_out_of_bbox: bool = False,
+                 torso_keypoint_indexes: Optional[Sequence[int]] = None,
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None,
                  twin_keypoints: Optional[Sequence[Sequence[int]]] = None) -> None:
@@ -50,6 +53,9 @@ class Recall_Atraf(PCKAccuracy):
         self.kpt_indexes = kpt_indexes
         self.score_threshold = score_threshold
         self.twin_keypoints = twin_keypoints
+        self.ignore_gt_out_of_image = ignore_gt_out_of_image
+        self.ignore_gt_out_of_bbox = ignore_gt_out_of_bbox
+        self.torso_keypoint_indexes = torso_keypoint_indexes or [4, 5]
 
     def process(self, data_batch: Sequence[dict],
                 data_samples: Sequence[dict]) -> None:
@@ -73,6 +79,26 @@ class Recall_Atraf(PCKAccuracy):
                 mask = mask[:, kpt_indexes]
                 if pred_scores is not None:
                     pred_scores = pred_scores[:, kpt_indexes]
+
+            if self.ignore_gt_out_of_image:
+                img_shape = data_sample.get('img_shape', None)
+                if img_shape is not None:
+                    h, w = img_shape[0], img_shape[1]
+                    gt_xy = gt_coords[0]
+                    out_of_image = (
+                        (gt_xy[:, 0] < 0) | (gt_xy[:, 1] < 0) |
+                        (gt_xy[:, 0] > w) | (gt_xy[:, 1] > h))
+                    mask[0, out_of_image] = False
+
+            if self.ignore_gt_out_of_bbox:
+                if 'bboxes' in gt:
+                    bbox = gt['bboxes'][0]
+                    x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+                    gt_xy = gt_coords[0]
+                    out_of_bbox = (
+                        (gt_xy[:, 0] < x1) | (gt_xy[:, 1] < y1) |
+                        (gt_xy[:, 0] > x2) | (gt_xy[:, 1] > y2))
+                    mask[0, out_of_bbox] = False
 
             # ensure pred_scores exists and has batch dim
             if pred_scores is None:
@@ -105,26 +131,27 @@ class Recall_Atraf(PCKAccuracy):
                 result['head_size'] = head_size
 
             if 'torso' in self.norm_item:
+                tk0, tk1 = self.torso_keypoint_indexes[0], self.torso_keypoint_indexes[1]
                 if self.kpt_indexes is not None:
                     kpt_indexes = np.array(self.kpt_indexes)
-                    torso_kpt_4_idx = np.where(kpt_indexes == 4)[0]
-                    torso_kpt_5_idx = np.where(kpt_indexes == 5)[0]
+                    torso_kpt_0_idx = np.where(kpt_indexes == tk0)[0]
+                    torso_kpt_1_idx = np.where(kpt_indexes == tk1)[0]
 
-                    if len(torso_kpt_4_idx) > 0 and len(torso_kpt_5_idx) > 0:
+                    if len(torso_kpt_0_idx) > 0 and len(torso_kpt_1_idx) > 0:
                         torso_size_ = np.linalg.norm(
-                            gt_coords[0][torso_kpt_4_idx[0]] -
-                            gt_coords[0][torso_kpt_5_idx[0]])
+                            gt_coords[0][torso_kpt_0_idx[0]] -
+                            gt_coords[0][torso_kpt_1_idx[0]])
                         if torso_size_ < 1:
                             torso_size_ = np.linalg.norm(
-                                pred_coords[0][torso_kpt_4_idx[0]] -
-                                pred_coords[0][torso_kpt_5_idx[0]])
+                                pred_coords[0][torso_kpt_0_idx[0]] -
+                                pred_coords[0][torso_kpt_1_idx[0]])
                     else:
                         torso_size_ = None
                 else:
-                    torso_size_ = np.linalg.norm(gt_coords[0][4] - gt_coords[0][5])
+                    torso_size_ = np.linalg.norm(gt_coords[0][tk0] - gt_coords[0][tk1])
                     if torso_size_ < 1:
-                        torso_size_ = np.linalg.norm(pred_coords[0][4] -
-                                                     pred_coords[0][5])
+                        torso_size_ = np.linalg.norm(pred_coords[0][tk0] -
+                                                     pred_coords[0][tk1])
 
                 if torso_size_ is not None:
                     torso_size = np.array([torso_size_, torso_size_]).reshape(-1, 2)
@@ -186,7 +213,11 @@ class Recall_Atraf(PCKAccuracy):
         else:
             f1 = 0.0
 
-        return recall, far, precision, f1
+        # Accuracy: portion of all valid keypoints that are correct and high-score
+        total_valid = int(valid_t.sum())
+        accuracy = float(correct_high / total_valid) if total_valid > 0 else 0.0
+
+        return recall, far, precision, f1, accuracy
 
     def compute_metrics(self, results: list) -> Dict[str, float]:
         logger: MMLogger = MMLogger.get_current_instance()
@@ -203,21 +234,23 @@ class Recall_Atraf(PCKAccuracy):
             norm_size_bbox = np.concatenate([r['bbox_size'] for r in results])
             logger.info(f'Evaluating {self.__class__.__name__} '
                         f'(normalized by ``"bbox_size"``){metric_prefix}...')
-            recall, far, precision, f1 = self._compute_from_norm_factor(pred_coords, gt_coords, mask, pred_scores, norm_size_bbox)
+            recall, far, precision, f1, accuracy = self._compute_from_norm_factor(pred_coords, gt_coords, mask, pred_scores, norm_size_bbox)
             metrics['Recall'] = recall
             metrics['FAR'] = far
             metrics['Precision'] = precision
             metrics['F1'] = f1
+            metrics['Accuracy'] = accuracy
 
         if 'head' in self.norm_item:
             norm_size_head = np.concatenate([r['head_size'] for r in results])
             logger.info(f'Evaluating {self.__class__.__name__} '
                         f'(normalized by ``"head_size"``){metric_prefix}...')
-            recall, far, precision, f1 = self._compute_from_norm_factor(pred_coords, gt_coords, mask, pred_scores, norm_size_head)
+            recall, far, precision, f1, accuracy = self._compute_from_norm_factor(pred_coords, gt_coords, mask, pred_scores, norm_size_head)
             metrics['Recallh'] = recall
             metrics['FARh'] = far
             metrics['Precisionh'] = precision
             metrics['F1h'] = f1
+            metrics['Accuracyh'] = accuracy
 
         if 'torso' in self.norm_item:
             valid_torso_results = [r for r in results if r.get('torso_size') is not None]
@@ -231,11 +264,12 @@ class Recall_Atraf(PCKAccuracy):
 
                 logger.info(f'Evaluating {self.__class__.__name__} '
                             f'(normalized by ``"torso_size"``){metric_prefix}...')
-                recall, far, precision, f1 = self._compute_from_norm_factor(valid_pred_coords, valid_gt_coords, valid_mask, valid_pred_scores, norm_size_torso)
+                recall, far, precision, f1, accuracy = self._compute_from_norm_factor(valid_pred_coords, valid_gt_coords, valid_mask, valid_pred_scores, norm_size_torso)
                 metrics['Recallt'] = recall
                 metrics['FARt'] = far
                 metrics['Precisiont'] = precision
                 metrics['F1t'] = f1
+                metrics['Accuracyt'] = accuracy
 
         return metrics
 

@@ -62,6 +62,8 @@ class AtrafAUC(AUC):
                  num_thrs: int = 20,
                  kpt_indexes: Optional[Sequence[int]] = None,
                  twin_keypoints: Optional[Sequence[Sequence[int]]] = None,
+                 ignore_gt_out_of_image: bool = False,
+                 ignore_gt_out_of_bbox: bool = False,
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None) -> None:
         super().__init__(
@@ -71,6 +73,8 @@ class AtrafAUC(AUC):
             prefix=prefix)
         self.kpt_indexes = kpt_indexes
         self.twin_keypoints = twin_keypoints
+        self.ignore_gt_out_of_image = ignore_gt_out_of_image
+        self.ignore_gt_out_of_bbox = ignore_gt_out_of_bbox
 
     def process(self, data_batch: Sequence[dict],
                 data_samples: Sequence[dict]) -> None:
@@ -103,6 +107,26 @@ class AtrafAUC(AUC):
                 gt_coords = gt_coords[:, kpt_indexes, :]
                 mask = mask[:, kpt_indexes]
 
+            if self.ignore_gt_out_of_image:
+                img_shape = data_sample.get('img_shape', None)
+                if img_shape is not None:
+                    h, w = img_shape[0], img_shape[1]
+                    gt_xy = gt_coords[0]
+                    out_of_image = (
+                        (gt_xy[:, 0] < 0) | (gt_xy[:, 1] < 0) |
+                        (gt_xy[:, 0] > w) | (gt_xy[:, 1] > h))
+                    mask[0, out_of_image] = False
+
+            if self.ignore_gt_out_of_bbox:
+                if 'bboxes' in gt:
+                    bbox = gt['bboxes'][0]
+                    x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+                    gt_xy = gt_coords[0]
+                    out_of_bbox = (
+                        (gt_xy[:, 0] < x1) | (gt_xy[:, 1] < y1) |
+                        (gt_xy[:, 0] > x2) | (gt_xy[:, 1] > y2))
+                    mask[0, out_of_bbox] = False
+
             result = {
                 'pred_coords': pred_coords,
                 'gt_coords': gt_coords,
@@ -130,9 +154,6 @@ class AtrafAUC(AUC):
         gt_coords = np.concatenate([result['gt_coords'] for result in results])
         # mask: [N, K]
         mask = np.concatenate([result['mask'] for result in results])
-
-        metric_prefix = ' (filtered by kpt_indexes)' if self.kpt_indexes else ''
-        logger.info(f'Evaluating {self.__class__.__name__}{metric_prefix}...')
 
         metric_prefix = ' (filtered by kpt_indexes)' if self.kpt_indexes else ''
         logger.info(f'Evaluating {self.__class__.__name__}{metric_prefix}...')
@@ -223,6 +244,8 @@ class AtrafEPE(EPE):
     def __init__(self,
                  kpt_indexes: Optional[Sequence[int]] = None,
                  twin_keypoints: Optional[Sequence[Sequence[int]]] = None,
+                 ignore_gt_out_of_image: bool = False,
+                 ignore_gt_out_of_bbox: bool = False,
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None) -> None:
         super().__init__(
@@ -230,6 +253,8 @@ class AtrafEPE(EPE):
             prefix=prefix)
         self.kpt_indexes = kpt_indexes
         self.twin_keypoints = twin_keypoints
+        self.ignore_gt_out_of_image = ignore_gt_out_of_image
+        self.ignore_gt_out_of_bbox = ignore_gt_out_of_bbox
 
     def process(self, data_batch: Sequence[dict],
                 data_samples: Sequence[dict]) -> None:
@@ -261,6 +286,26 @@ class AtrafEPE(EPE):
                 pred_coords = pred_coords[:, kpt_indexes, :]
                 gt_coords = gt_coords[:, kpt_indexes, :]
                 mask = mask[:, kpt_indexes]
+
+            if self.ignore_gt_out_of_image:
+                img_shape = data_sample.get('img_shape', None)
+                if img_shape is not None:
+                    h, w = img_shape[0], img_shape[1]
+                    gt_xy = gt_coords[0]
+                    out_of_image = (
+                        (gt_xy[:, 0] < 0) | (gt_xy[:, 1] < 0) |
+                        (gt_xy[:, 0] > w) | (gt_xy[:, 1] > h))
+                    mask[0, out_of_image] = False
+
+            if self.ignore_gt_out_of_bbox:
+                if 'bboxes' in gt:
+                    bbox = gt['bboxes'][0]
+                    x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+                    gt_xy = gt_coords[0]
+                    out_of_bbox = (
+                        (gt_xy[:, 0] < x1) | (gt_xy[:, 1] < y1) |
+                        (gt_xy[:, 0] > x2) | (gt_xy[:, 1] > y2))
+                    mask[0, out_of_bbox] = False
 
             result = {
                 'pred_coords': pred_coords,

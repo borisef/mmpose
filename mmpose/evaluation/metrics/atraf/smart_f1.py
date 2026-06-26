@@ -111,6 +111,9 @@ class Smart_F1(PCKAccuracy):
                  norm_item: Union[str, Sequence[str]] = 'bbox',
                  kpt_indexes: Optional[Sequence[int]] = None,
                  num_steps: int = 101,
+                 ignore_gt_out_of_image: bool = False,
+                 ignore_gt_out_of_bbox: bool = False,
+                 torso_keypoint_indexes: Optional[Sequence[int]] = None,
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None,
                  twin_keypoints: Optional[Sequence[Sequence[int]]] = None,
@@ -120,6 +123,9 @@ class Smart_F1(PCKAccuracy):
         self.kpt_indexes = kpt_indexes
         self.num_steps = int(num_steps)
         self.twin_keypoints = twin_keypoints
+        self.ignore_gt_out_of_image = ignore_gt_out_of_image
+        self.ignore_gt_out_of_bbox = ignore_gt_out_of_bbox
+        self.torso_keypoint_indexes = torso_keypoint_indexes or [4, 5]
         self.generate_chart = bool(generate_chart)
         self.chart_images_folder = chart_images_folder
     def process(self, data_batch: Sequence[dict], data_samples: Sequence[dict]) -> None:
@@ -140,6 +146,24 @@ class Smart_F1(PCKAccuracy):
                 mask = mask[:, kpt_indexes]
                 if pred_scores is not None:
                     pred_scores = pred_scores[:, kpt_indexes]
+            if self.ignore_gt_out_of_image:
+                img_shape = data_sample.get('img_shape', None)
+                if img_shape is not None:
+                    h, w = img_shape[0], img_shape[1]
+                    gt_xy = gt_coords[0]
+                    out_of_image = (
+                        (gt_xy[:, 0] < 0) | (gt_xy[:, 1] < 0) |
+                        (gt_xy[:, 0] > w) | (gt_xy[:, 1] > h))
+                    mask[0, out_of_image] = False
+            if self.ignore_gt_out_of_bbox:
+                if 'bboxes' in gt:
+                    bbox = gt['bboxes'][0]
+                    x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+                    gt_xy = gt_coords[0]
+                    out_of_bbox = (
+                        (gt_xy[:, 0] < x1) | (gt_xy[:, 1] < y1) |
+                        (gt_xy[:, 0] > x2) | (gt_xy[:, 1] > y2))
+                    mask[0, out_of_bbox] = False
             if pred_scores is None:
                 pred_scores = np.ones((pred_coords.shape[0], pred_coords.shape[1]), dtype=np.float32)
             else:
@@ -163,20 +187,21 @@ class Smart_F1(PCKAccuracy):
                 head_size = np.array([head_size_, head_size_]).reshape(-1, 2)
                 result['head_size'] = head_size
             if 'torso' in self.norm_item:
+                tk0, tk1 = self.torso_keypoint_indexes[0], self.torso_keypoint_indexes[1]
                 if self.kpt_indexes is not None:
                     kpt_indexes = np.array(self.kpt_indexes)
-                    torso_kpt_4_idx = np.where(kpt_indexes == 4)[0]
-                    torso_kpt_5_idx = np.where(kpt_indexes == 5)[0]
-                    if len(torso_kpt_4_idx) > 0 and len(torso_kpt_5_idx) > 0:
-                        torso_size_ = np.linalg.norm(gt_coords[0][torso_kpt_4_idx[0]] - gt_coords[0][torso_kpt_5_idx[0]])
+                    torso_kpt_0_idx = np.where(kpt_indexes == tk0)[0]
+                    torso_kpt_1_idx = np.where(kpt_indexes == tk1)[0]
+                    if len(torso_kpt_0_idx) > 0 and len(torso_kpt_1_idx) > 0:
+                        torso_size_ = np.linalg.norm(gt_coords[0][torso_kpt_0_idx[0]] - gt_coords[0][torso_kpt_1_idx[0]])
                         if torso_size_ < 1:
-                            torso_size_ = np.linalg.norm(pred_coords[0][torso_kpt_4_idx[0]] - pred_coords[0][torso_kpt_5_idx[0]])
+                            torso_size_ = np.linalg.norm(pred_coords[0][torso_kpt_0_idx[0]] - pred_coords[0][torso_kpt_1_idx[0]])
                     else:
                         torso_size_ = None
                 else:
-                    torso_size_ = np.linalg.norm(gt_coords[0][4] - gt_coords[0][5])
+                    torso_size_ = np.linalg.norm(gt_coords[0][tk0] - gt_coords[0][tk1])
                     if torso_size_ < 1:
-                        torso_size_ = np.linalg.norm(pred_coords[0][4] - pred_coords[0][5])
+                        torso_size_ = np.linalg.norm(pred_coords[0][tk0] - pred_coords[0][tk1])
                 if torso_size_ is not None:
                     torso_size = np.array([torso_size_, torso_size_]).reshape(-1, 2)
                     result['torso_size'] = torso_size
@@ -220,7 +245,9 @@ class Smart_F1(PCKAccuracy):
             f1 = float(2.0 * precision * recall / (precision + recall))
         else:
             f1 = 0.0
-        return recall, far, precision, f1
+        total_valid = int(valid_t.sum())
+        accuracy = float(correct_high / total_valid) if total_valid > 0 else 0.0
+        return recall, far, precision, f1, accuracy
     def _generate_and_log_chart(self, recalls, precisions, thresholds, best_t, best_f1, norm_name):
         """Generate PR chart and optionally log to TensorBoard."""
         if not self.generate_chart or plt is None:
@@ -295,17 +322,20 @@ class Smart_F1(PCKAccuracy):
             logger.info(f'Evaluating {self.__class__.__name__} (normalized by ``"bbox_size"``){metric_prefix}...')
             best_f1 = -1.0
             best_t = 0.0
+            best_acc = 0.0
             precisions = []
             recalls = []
             for t in thresholds:
-                rec, _, prec, f1 = self._eval_at_threshold(pred_coords, gt_coords, mask, pred_scores, norm_size_bbox, t)
+                rec, _, prec, f1, acc = self._eval_at_threshold(pred_coords, gt_coords, mask, pred_scores, norm_size_bbox, t)
                 precisions.append(prec)
                 recalls.append(rec)
                 if f1 > best_f1 or (abs(f1 - best_f1) <= 1e-12 and t < best_t):
                     best_f1 = f1
                     best_t = float(t)
+                    best_acc = acc
             metrics['SmartF1'] = float(best_f1)
             metrics['SmartThreshold'] = float(best_t)
+            metrics['SmartAccuracy'] = float(best_acc)
             # pass chart_step via self attribute; _generate_and_log_chart will use it
             self._generate_and_log_chart(recalls, precisions, thresholds, best_t, best_f1, 'bbox')
         if 'head' in self.norm_item:
@@ -313,17 +343,20 @@ class Smart_F1(PCKAccuracy):
             logger.info(f'Evaluating {self.__class__.__name__} (normalized by ``"head_size"``){metric_prefix}...')
             best_f1 = -1.0
             best_t = 0.0
+            best_acc = 0.0
             precisions = []
             recalls = []
             for t in thresholds:
-                rec, _, prec, f1 = self._eval_at_threshold(pred_coords, gt_coords, mask, pred_scores, norm_size_head, t)
+                rec, _, prec, f1, acc = self._eval_at_threshold(pred_coords, gt_coords, mask, pred_scores, norm_size_head, t)
                 precisions.append(prec)
                 recalls.append(rec)
                 if f1 > best_f1 or (abs(f1 - best_f1) <= 1e-12 and t < best_t):
                     best_f1 = f1
                     best_t = float(t)
+                    best_acc = acc
             metrics['SmartF1h'] = float(best_f1)
             metrics['SmartThresholdh'] = float(best_t)
+            metrics['SmartAccuracyh'] = float(best_acc)
             self._generate_and_log_chart(recalls, precisions, thresholds, best_t, best_f1, 'head')
         if 'torso' in self.norm_item:
             valid_torso_results = [r for r in results if r.get('torso_size') is not None]
@@ -337,17 +370,20 @@ class Smart_F1(PCKAccuracy):
                 logger.info(f'Evaluating {self.__class__.__name__} (normalized by ``"torso_size"``){metric_prefix}...')
                 best_f1 = -1.0
                 best_t = 0.0
+                best_acc = 0.0
                 precisions = []
                 recalls = []
                 for t in thresholds:
-                    rec, _, prec, f1 = self._eval_at_threshold(valid_pred_coords, valid_gt_coords, valid_mask, valid_pred_scores, norm_size_torso, t)
+                    rec, _, prec, f1, acc = self._eval_at_threshold(valid_pred_coords, valid_gt_coords, valid_mask, valid_pred_scores, norm_size_torso, t)
                     precisions.append(prec)
                     recalls.append(rec)
                     if f1 > best_f1 or (abs(f1 - best_f1) <= 1e-12 and t < best_t):
                         best_f1 = f1
                         best_t = float(t)
+                        best_acc = acc
                 metrics['SmartF1t'] = float(best_f1)
                 metrics['SmartThresholdt'] = float(best_t)
+                metrics['SmartAccuracyt'] = float(best_acc)
                 self._generate_and_log_chart(recalls, precisions, thresholds, best_t, best_f1, 'torso')
 
         # increment chart step for next invocation

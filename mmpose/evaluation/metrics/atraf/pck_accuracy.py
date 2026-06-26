@@ -66,6 +66,9 @@ class AtrafPCKAccuracy(PCKAccuracy):
                  norm_item: Union[str, Sequence[str]] = 'bbox',
                  kpt_indexes: Optional[Sequence[int]] = None,
                  twin_keypoints: Optional[Sequence[Sequence[int]]] = None,
+                 ignore_gt_out_of_image: bool = False,
+                 ignore_gt_out_of_bbox: bool = False,
+                 torso_keypoint_indexes: Optional[Sequence[int]] = None,
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None) -> None:
         super().__init__(
@@ -75,6 +78,9 @@ class AtrafPCKAccuracy(PCKAccuracy):
             prefix=prefix)
         self.kpt_indexes = kpt_indexes
         self.twin_keypoints = twin_keypoints
+        self.ignore_gt_out_of_image = ignore_gt_out_of_image
+        self.ignore_gt_out_of_bbox = ignore_gt_out_of_bbox
+        self.torso_keypoint_indexes = torso_keypoint_indexes or [4, 5]
 
     def process(self, data_batch: Sequence[dict],
                 data_samples: Sequence[dict]) -> None:
@@ -107,6 +113,26 @@ class AtrafPCKAccuracy(PCKAccuracy):
                 gt_coords = gt_coords[:, kpt_indexes, :]
                 mask = mask[:, kpt_indexes]
 
+            if self.ignore_gt_out_of_image:
+                img_shape = data_sample.get('img_shape', None)
+                if img_shape is not None:
+                    h, w = img_shape[0], img_shape[1]
+                    gt_xy = gt_coords[0]
+                    out_of_image = (
+                        (gt_xy[:, 0] < 0) | (gt_xy[:, 1] < 0) |
+                        (gt_xy[:, 0] > w) | (gt_xy[:, 1] > h))
+                    mask[0, out_of_image] = False
+
+            if self.ignore_gt_out_of_bbox:
+                if 'bboxes' in gt:
+                    bbox = gt['bboxes'][0]
+                    x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+                    gt_xy = gt_coords[0]
+                    out_of_bbox = (
+                        (gt_xy[:, 0] < x1) | (gt_xy[:, 1] < y1) |
+                        (gt_xy[:, 0] > x2) | (gt_xy[:, 1] > y2))
+                    mask[0, out_of_bbox] = False
+
             result = {
                 'pred_coords': pred_coords,
                 'gt_coords': gt_coords,
@@ -130,33 +156,27 @@ class AtrafPCKAccuracy(PCKAccuracy):
                 result['head_size'] = head_size
 
             if 'torso' in self.norm_item:
-                # used in JhmdbDataset
-                # ATRAF: When filtering keypoints, need to check if torso
-                # keypoints (4 and 5) are in the filtered indices
+                tk0, tk1 = self.torso_keypoint_indexes[0], self.torso_keypoint_indexes[1]
                 if self.kpt_indexes is not None:
                     kpt_indexes = np.array(self.kpt_indexes)
-                    # Get indices of torso keypoints if they exist in filtered set
-                    torso_kpt_4_idx = np.where(kpt_indexes == 4)[0]
-                    torso_kpt_5_idx = np.where(kpt_indexes == 5)[0]
+                    torso_kpt_0_idx = np.where(kpt_indexes == tk0)[0]
+                    torso_kpt_1_idx = np.where(kpt_indexes == tk1)[0]
 
-                    if len(torso_kpt_4_idx) > 0 and len(torso_kpt_5_idx) > 0:
-                        # Use the filtered indices within the reduced keypoint set
+                    if len(torso_kpt_0_idx) > 0 and len(torso_kpt_1_idx) > 0:
                         torso_size_ = np.linalg.norm(
-                            gt_coords[0][torso_kpt_4_idx[0]] -
-                            gt_coords[0][torso_kpt_5_idx[0]])
+                            gt_coords[0][torso_kpt_0_idx[0]] -
+                            gt_coords[0][torso_kpt_1_idx[0]])
                         if torso_size_ < 1:
                             torso_size_ = np.linalg.norm(
-                                pred_coords[0][torso_kpt_4_idx[0]] -
-                                pred_coords[0][torso_kpt_5_idx[0]])
+                                pred_coords[0][torso_kpt_0_idx[0]] -
+                                pred_coords[0][torso_kpt_1_idx[0]])
                     else:
-                        # Torso keypoints not in filtered set, skip torso norm
                         torso_size_ = None
                 else:
-                    # Original logic when no filtering
-                    torso_size_ = np.linalg.norm(gt_coords[0][4] - gt_coords[0][5])
+                    torso_size_ = np.linalg.norm(gt_coords[0][tk0] - gt_coords[0][tk1])
                     if torso_size_ < 1:
-                        torso_size_ = np.linalg.norm(pred_coords[0][4] -
-                                                     pred_coords[0][5])
+                        torso_size_ = np.linalg.norm(pred_coords[0][tk0] -
+                                                     pred_coords[0][tk1])
 
                 if torso_size_ is not None:
                     torso_size = np.array([torso_size_,
