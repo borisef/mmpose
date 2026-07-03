@@ -9,8 +9,8 @@ from mmengine.logging import MMLogger
 from mmpose.registry import METRICS
 from mmpose.structures import PoseDataSample
 
-# reuse tensorboard helper from smart_f1 to ensure consistent logging
-from mmpose.evaluation.metrics.atraf.smart_f1 import _save_image_to_tensorboard, _TB_AVAILABLE, plt, _get_chart_step
+# reuse tensorboard / matplotlib helpers to ensure consistent logging
+from mmpose.evaluation.metrics.atraf._chart_utils import _save_image_to_tensorboard, _TB_AVAILABLE, plt, _get_chart_step
 
 
 @METRICS.register_module()
@@ -27,7 +27,9 @@ class ClassificationMetricConfusionMatrix(BaseMetric):
 
     Args:
         classifiers (List[Dict]): List of classifier configs with keys
-            ``field_name`` and ``num_classes``.
+            ``field_name`` and ``num_classes``. Each may optionally include
+            ``class_names`` (a list of length ``num_classes``) used to label the
+            confusion-matrix axes; when absent, numeric indices are used.
         collect_device (str): Device name used for collecting results from
             different ranks during distributed training. Defaults to 'cpu'.
         prefix (str, optional): Metric prefix. Defaults to None.
@@ -35,6 +37,8 @@ class ClassificationMetricConfusionMatrix(BaseMetric):
             TensorBoard. Default: False.
         chart_images_folder (str, optional): Folder to save confusion PNGs.
             If None and generate_chart True, uses './chart_images'.
+        use_ratios (bool): If True, display the confusion matrix as row-wise
+            ratios (each row sums to 1) instead of raw counts. Default: False.
     """
 
     rule = 'greater'
@@ -45,7 +49,8 @@ class ClassificationMetricConfusionMatrix(BaseMetric):
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None,
                  generate_chart: bool = False,
-                 chart_images_folder: Optional[str] = None):
+                 chart_images_folder: Optional[str] = None,
+                 use_ratios: bool = False):
         super().__init__(collect_device=collect_device, prefix=prefix)
         self.classifiers = classifiers
         self.classifier_names = [c['field_name'] for c in classifiers]
@@ -56,6 +61,7 @@ class ClassificationMetricConfusionMatrix(BaseMetric):
         }
         self.generate_chart = bool(generate_chart)
         self.chart_images_folder = chart_images_folder
+        self.use_ratios = bool(use_ratios)
 
     def process(self, data_batch: dict, data_samples: Sequence[PoseDataSample]) -> None:
         for data_sample in data_samples:
@@ -82,7 +88,8 @@ class ClassificationMetricConfusionMatrix(BaseMetric):
         # append a lightweight record for distributed aggregation
         self.results.append({'processed': len(data_samples)})
 
-    def _generate_and_log_confusion(self, cm: np.ndarray, field_name: str):
+    def _generate_and_log_confusion(self, cm: np.ndarray, field_name: str,
+                                    class_names=None):
         if not self.generate_chart or plt is None:
             return
         logger = MMLogger.get_current_instance()
@@ -96,21 +103,45 @@ class ClassificationMetricConfusionMatrix(BaseMetric):
             else:
                 out_path = os.path.join(out_folder, f'{name}.png')
 
+            num_classes = cm.shape[0]
+            if class_names is None or len(class_names) != num_classes:
+                class_names = [str(i) for i in range(num_classes)]
+
+            # optionally convert counts to row-wise ratios (each row sums to 1)
+            if self.use_ratios:
+                row_sums = cm.sum(axis=1, keepdims=True)
+                disp = np.divide(
+                    cm, row_sums, out=np.zeros(cm.shape, dtype=float),
+                    where=row_sums > 0)
+                fmt = '.2f'
+                thresh = 0.5
+            else:
+                disp = cm
+                fmt = 'd'
+                thresh = cm.max() / 2. if cm.max() > 0 else 0
+
             fig, ax = plt.subplots(figsize=(6, 6))
-            im = ax.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+            im = ax.imshow(disp, interpolation='nearest', cmap=plt.cm.Blues)
             ax.figure.colorbar(im, ax=ax)
             ax.set_xlabel('Predicted')
             ax.set_ylabel('True')
             ax.set_title(f'Confusion Matrix: {field_name}')
 
-            # annotate cells with counts
-            fmt = 'd'
-            thresh = cm.max() / 2. if cm.max() > 0 else 0
-            for i in range(cm.shape[0]):
-                for j in range(cm.shape[1]):
-                    ax.text(j, i, format(int(cm[i, j]), fmt),
+            # label axes with class names instead of numeric indices
+            ax.set_xticks(range(num_classes))
+            ax.set_yticks(range(num_classes))
+            ax.set_xticklabels(class_names, rotation=45, ha='right')
+            ax.set_yticklabels(class_names)
+
+            # annotate cells with counts or ratios
+            for i in range(disp.shape[0]):
+                for j in range(disp.shape[1]):
+                    val = disp[i, j]
+                    text = format(int(val), fmt) if fmt == 'd' \
+                        else format(val, fmt)
+                    ax.text(j, i, text,
                             ha="center", va="center",
-                            color="white" if cm[i, j] > thresh else "black")
+                            color="white" if val > thresh else "black")
 
             fig.tight_layout()
             fig.savefig(out_path)
@@ -139,6 +170,7 @@ class ClassificationMetricConfusionMatrix(BaseMetric):
         for clf in self.classifiers:
             field_name = clf['field_name']
             num_classes = clf.get('num_classes', None)
+            class_names = clf.get('class_names', None)
             pred = np.array(self.classifier_results[field_name]['pred_classes'])
             gt = np.array(self.classifier_results[field_name]['gt_classes'])
             if len(gt) == 0:
@@ -185,7 +217,7 @@ class ClassificationMetricConfusionMatrix(BaseMetric):
 
             # generate and log confusion matrix image
             # attach chart step attribute used by helper
-            self._generate_and_log_confusion(cm, field_name)
+            self._generate_and_log_confusion(cm, field_name, class_names)
 
         # Reset for next evaluation epoch.
         for field_name in self.classifier_names:

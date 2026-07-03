@@ -44,7 +44,10 @@ default_hooks = dict(
     param_scheduler=dict(type='ParamSchedulerHook'),
     checkpoint=dict(
         type='CheckpointHook', interval=1,
-        save_best=['smart_oob/SmartF2', 'smart_oob/SmartF1', 'pck_no_oob/PCK'],
+        # SmartF2 was removed; F2 (now on Recall_Atraf) is its replacement.
+        # SmartF1 is also emitted by Recall_Atraf now. Keys must match a
+        # metric+prefix present in val_evaluator below (here: 'recall_oob').
+        save_best=['recall_oob/F2', 'recall_oob/SmartF1', 'pck_no_oob/PCK'],
         rule=['greater', 'greater', 'greater'],
         max_keep_ckpts=10),
     sampler_seed=dict(type='DistSamplerSeedHook'),
@@ -254,53 +257,153 @@ val_evaluator = [
     dict(type='AtrafEPE', kpt_indexes=[0,1,2,3], prefix='epe_no_oob',
          ignore_gt_out_of_image=True, ignore_gt_out_of_bbox=True),
 
-    # =====================================================================
-    # NEW FEATURE: Accuracy metric (correct_high / total_valid)
-    # Recall_Atraf now also reports Accuracy alongside Recall/FAR/Precision/F1.
-    # With ignore_gt_out_of_bbox to exclude out-of-bbox GT keypoints.
-    # =====================================================================
-    dict(type='Recall_Atraf', kpt_indexes=[0,1,2,3], prefix='recall_oob', thr=0.2,
-         score_threshold=0.5, ignore_gt_out_of_bbox=True),
-    dict(type='FAR_atraf', kpt_indexes=[0,1,2,3], prefix='far_oob', thr=0.2,
-         score_threshold=0.5, ignore_gt_out_of_bbox=True),
+    # #####################################################################
+    # #####################################################################
+    # GROUP 1 - Recall_Atraf
+    #   Outputs (per norm suffix ''/h/t): Recall, Precision, F1, F2,
+    #                                     SmartF1, SmartThreshold
+    #   All options:
+    #     thr                    (float)  PCK correctness threshold
+    #     score_threshold        (float)  "high-score" cutoff for Recall/F1
+    #     num_steps              (int)    thresholds sampled in [0,1] for SmartF1
+    #     norm_item              str | list of {'bbox','head','torso'}
+    #     kpt_indexes            (list)   evaluate only these keypoints
+    #     ignore_gt_out_of_image (bool)   mask GT outside the image
+    #     ignore_gt_out_of_bbox  (bool)   mask GT outside the bbox
+    #     torso_keypoint_indexes (list)   pair used when norm_item='torso'
+    #     twin_keypoints         (list)   symmetric pairs, min-distance match
+    #     generate_chart         (bool)   save a Precision-Recall PNG
+    #     chart_images_folder    (str)    where to save charts
+    #     collect_device         (str)    'cpu' or 'gpu'
+    #     prefix                 (str)    key namespace
+    # #####################################################################
 
-    # =====================================================================
-    # NEW FEATURE: SmartAccuracy (accuracy at the optimal F1 threshold)
-    # Smart_F1 now also reports SmartAccuracy alongside SmartF1/SmartThreshold.
-    # =====================================================================
-    dict(type='Smart_F1', kpt_indexes=[0,1,2,3], prefix='smart_oob',
-         thr=0.2, num_steps=101, ignore_gt_out_of_bbox=True,
-         generate_chart=True, chart_images_folder=work_dir + '/smart_f1_charts'),
+    # 1a. Minimal: all defaults (norm bbox, thr .05, score_thr .5, num_steps 101)
+    dict(type='Recall_Atraf', prefix='recall_default'),
 
-    # =====================================================================
-    # NEW FEATURE: torso_keypoint_indexes
-    # Custom keypoint pair for torso normalization (replaces hardcoded [4,5]).
-    # Here we use keypoints [1,10] as the torso reference pair.
-    # =====================================================================
-    dict(type='AtrafPCKAccuracy', kpt_indexes=[0,1,2,3], prefix='pck_torso_custom',
+    # 1b. Filter to a subset of keypoints only
+    dict(type='Recall_Atraf', prefix='recall_kpts', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3]),
+
+    # 1c. Custom PCK threshold + score threshold + finer/coarser sweep
+    dict(type='Recall_Atraf', prefix='recall_thr', thr=0.1,
+         kpt_indexes=[0, 1, 2, 3], score_threshold=0.3, num_steps=201),
+
+    # 1d. ignore_gt_out_of_image only
+    dict(type='Recall_Atraf', prefix='recall_ooi', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3], ignore_gt_out_of_image=True),
+
+    # 1e. ignore_gt_out_of_bbox only
+    dict(type='Recall_Atraf', prefix='recall_oob', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3], ignore_gt_out_of_bbox=True),
+
+    # 1f. Both spatial masks together
+    dict(type='Recall_Atraf', prefix='recall_ooi_oob', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3],
+         ignore_gt_out_of_image=True, ignore_gt_out_of_bbox=True),
+
+    # 1g. Torso normalization with a custom keypoint pair (default pair is [4,5])
+    #     (norm_item='head' also exists but needs 'head_size' in the annotations)
+    dict(type='Recall_Atraf', prefix='recall_torso', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3], norm_item='torso',
+         torso_keypoint_indexes=[1, 10]),
+
+    # 1h. Multiple norms at once -> emits '' (bbox) and 't' (torso) keys
+    dict(type='Recall_Atraf', prefix='recall_multi', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3], norm_item=['bbox', 'torso'],
+         torso_keypoint_indexes=[1, 10]),
+
+    # 1i. twin_keypoints: symmetric pairs matched by minimum distance
+    dict(type='Recall_Atraf', prefix='recall_twin', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3], twin_keypoints=[[0, 1], [2, 3]]),
+
+    # 1j. Chart generation (Precision-Recall + best-F1 marker) to disk/TensorBoard
+    dict(type='Recall_Atraf', prefix='recall_chart', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3],
+         generate_chart=True, chart_images_folder=work_dir + '/recall_charts'),
+
+    # 1k. Everything together
+    dict(type='Recall_Atraf', prefix='recall_all', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3], score_threshold=0.5, num_steps=101,
+         norm_item=['bbox', 'torso'], torso_keypoint_indexes=[1, 10],
+         twin_keypoints=[[0, 1], [2, 3]],
+         ignore_gt_out_of_image=True, ignore_gt_out_of_bbox=True,
+         collect_device='cpu',
+         generate_chart=True, chart_images_folder=work_dir + '/recall_all_charts'),
+
+    # #####################################################################
+    # GROUP 2 - Success_Rate
+    #   Outputs (per norm suffix ''/h/t): PD_Success_Rate, FAR_Error_Rate,
+    #     Skip_Rate, Combined_Success_Rate, Best_Combined_Success_Rate,
+    #     BestThreshold
+    #   Extra options on top of the GROUP 1 options:
+    #     weight_FAR  (float) weight of the (1 - FAR_Error_Rate) term
+    #     weight_skip (float) weight of the (1 - Skip_Rate) term
+    #     weight_PD   (float) weight of the PD_Success_Rate term
+    #   Combined = [w_FAR*(1-FAR) + w_skip*(1-Skip) + w_PD*PD] / (w_FAR+w_skip+w_PD)
+    # #####################################################################
+
+    # 2a. Minimal: all defaults, equal weights (1/1/1)
+    dict(type='Success_Rate', prefix='success_default'),
+
+    # 2b. Keypoint subset + custom thresholds/sweep
+    dict(type='Success_Rate', prefix='success_kpts', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3], score_threshold=0.3, num_steps=201),
+
+    # 2c. FAR-dominant weighting (penalize false alarms hardest)
+    dict(type='Success_Rate', prefix='success_far_heavy', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3],
+         weight_FAR=3.0, weight_skip=1.0, weight_PD=1.0),
+
+    # 2d. Skip-dominant weighting (penalize skipped/low-score hardest)
+    dict(type='Success_Rate', prefix='success_skip_heavy', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3],
+         weight_FAR=1.0, weight_skip=3.0, weight_PD=1.0),
+
+    # 2e. PD-dominant weighting (reward correct detections hardest)
+    dict(type='Success_Rate', prefix='success_pd_heavy', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3],
+         weight_FAR=1.0, weight_skip=1.0, weight_PD=3.0),
+
+    # 2f. Single-term weighting (zero out two terms -> Combined = PD only)
+    dict(type='Success_Rate', prefix='success_pd_only', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3],
+         weight_FAR=0.0, weight_skip=0.0, weight_PD=1.0),
+
+    # 2g. Spatial masks
+    dict(type='Success_Rate', prefix='success_ooi_oob', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3],
+         ignore_gt_out_of_image=True, ignore_gt_out_of_bbox=True),
+
+    # 2h. Torso normalization
+    dict(type='Success_Rate', prefix='success_torso', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3], norm_item='torso',
+         torso_keypoint_indexes=[1, 10]),
+
+    # 2i. Chart generation (Combined-vs-threshold curve with best marker)
+    dict(type='Success_Rate', prefix='success_chart', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3],
+         generate_chart=True, chart_images_folder=work_dir + '/success_charts'),
+
+    # 2j. Everything together
+    dict(type='Success_Rate', prefix='success_all', thr=0.2,
+         kpt_indexes=[0, 1, 2, 3], score_threshold=0.5, num_steps=101,
+         norm_item=['bbox', 'torso'], torso_keypoint_indexes=[1, 10],
+         twin_keypoints=[[0, 1], [2, 3]],
+         weight_FAR=2.0, weight_skip=1.0, weight_PD=1.5,
+         ignore_gt_out_of_image=True, ignore_gt_out_of_bbox=True,
+         collect_device='cpu',
+         generate_chart=True, chart_images_folder=work_dir + '/success_all_charts'),
+
+    # #####################################################################
+    # Reference PCK/AUC/EPE with the same torso setup (for comparison)
+    # #####################################################################
+    dict(type='AtrafPCKAccuracy', kpt_indexes=[0, 1, 2, 3], prefix='pck_torso',
          thr=0.2, norm_item='torso', torso_keypoint_indexes=[1, 10]),
-    dict(type='Recall_Atraf', kpt_indexes=[0,1,2,3], prefix='recall_torso_custom',
-         thr=0.2, score_threshold=0.5, norm_item='torso', torso_keypoint_indexes=[1, 10]),
-    dict(type='Smart_F1', kpt_indexes=[0,1,2,3], prefix='smart_torso_custom',
-         thr=0.2, num_steps=101, norm_item='torso', torso_keypoint_indexes=[1, 10],
-         generate_chart=True, chart_images_folder=work_dir + '/smart_f1_torso_charts'),
 
-    # =====================================================================
-    # COMBINED EXAMPLE: all new features together
-    # ignore_gt_out_of_image + ignore_gt_out_of_bbox + torso_keypoint_indexes
-    # + twin_keypoints + Accuracy/SmartAccuracy
-    # =====================================================================
-    dict(type='Recall_Atraf', kpt_indexes=[0,1,2,3], prefix='recall_all', thr=0.2,
-         score_threshold=0.5, norm_item=['bbox', 'torso'],
-         ignore_gt_out_of_image=True, ignore_gt_out_of_bbox=True,
-         torso_keypoint_indexes=[1, 10], twin_keypoints=[[0, 1], [2, 3]]),
-    dict(type='Smart_F1', kpt_indexes=[0,1,2,3], prefix='smart_all', thr=0.2,
-         num_steps=101, norm_item=['bbox', 'torso'],
-         ignore_gt_out_of_image=True, ignore_gt_out_of_bbox=True,
-         torso_keypoint_indexes=[1, 10], twin_keypoints=[[0, 1], [2, 3]],
-         generate_chart=True, chart_images_folder=work_dir + '/smart_f1_all_charts'),
-
-    # Classification metrics (unchanged)
+    # #####################################################################
+    # GROUP 3 - Classification metrics
+    # #####################################################################
     dict(
         type='ClassificationMetric',
         prefix='a',
@@ -309,15 +412,48 @@ val_evaluator = [
             dict(field_name='shape', num_classes=2),
         ]
     ),
+
+    # 3a. Confusion matrix as ROW-NORMALIZED RATIOS + class names on axes
     dict(
         type='ClassificationMetricConfusionMatrix',
-        prefix='b',
+        prefix='b_ratios',
+        classifiers=[
+            dict(field_name='gender', num_classes=3,
+                 class_names=['male', 'female', 'unknown']),
+            dict(field_name='shape', num_classes=2,
+                 class_names=['slim', 'wide']),
+        ],
+        generate_chart=True,
+        use_ratios=True,
+        chart_images_folder=work_dir + '/confusion_matrices_ratios'
+    ),
+
+    # 3b. Confusion matrix as RAW COUNTS (use_ratios=False) with class names
+    dict(
+        type='ClassificationMetricConfusionMatrix',
+        prefix='b_counts',
+        classifiers=[
+            dict(field_name='gender', num_classes=3,
+                 class_names=['male', 'female', 'unknown']),
+            dict(field_name='shape', num_classes=2,
+                 class_names=['slim', 'wide']),
+        ],
+        generate_chart=True,
+        use_ratios=False,
+        chart_images_folder=work_dir + '/confusion_matrices_counts'
+    ),
+
+    # 3c. No class_names -> axes fall back to numeric class indices
+    dict(
+        type='ClassificationMetricConfusionMatrix',
+        prefix='b_numeric',
         classifiers=[
             dict(field_name='gender', num_classes=3),
             dict(field_name='shape', num_classes=2),
         ],
         generate_chart=True,
-        chart_images_folder=work_dir + '/confusion_matrices'
+        use_ratios=True,
+        chart_images_folder=work_dir + '/confusion_matrices_numeric'
     ),
 ]
 test_evaluator = val_evaluator

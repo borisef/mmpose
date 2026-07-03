@@ -230,14 +230,16 @@ val_evaluator = [
     dict(type='AtrafAUC', kpt_indexes=[0,1,2,3], prefix='atraf_auc'),
     dict(type='EPE'),
     dict(type='AtrafEPE', kpt_indexes=[0,1,2,3], prefix='atraf_epe'),
-    # ATRAF recall and false-alarm-rate metrics
-    # Note: `Recall_Atraf` now also reports `Precision` and `F1` keys when used
-    dict(type='Recall_Atraf', kpt_indexes=[0,1,2,3], prefix='atraf_recall', thr=0.2, score_threshold=0.5),
-    dict(type='FAR_atraf', kpt_indexes=[0,1,2,3], prefix='atraf_far', thr=0.2, score_threshold=0.5),
-    # Smart_F1: scans score thresholds in [0,1] and picks the threshold
-    # that maximizes F1. It returns both `SmartF1` and `SmartThreshold`.
-    dict(type='Smart_F1', kpt_indexes=[0,1,2,3], prefix='atraf_smart',
-         thr=0.2, num_steps=101, generate_chart=True, chart_images_folder=work_dir + '/smart_f1_charts'),
+    # GROUP 1: Recall_Atraf -> Recall, Precision, F1, F2, SmartF1, SmartThreshold.
+    # The best-F1 threshold search (num_steps) is folded in here.
+    dict(type='Recall_Atraf', kpt_indexes=[0,1,2,3], prefix='atraf_recall',
+         thr=0.2, score_threshold=0.5, num_steps=101,
+         generate_chart=True, chart_images_folder=work_dir + '/smart_f1_charts'),
+    # GROUP 2: Success_Rate -> PD/FAR_Error/Skip/Combined + Best_Combined + BestThreshold.
+    dict(type='Success_Rate', kpt_indexes=[0,1,2,3], prefix='atraf_success',
+         thr=0.2, score_threshold=0.5, num_steps=101,
+         weight_FAR=1.0, weight_skip=1.0, weight_PD=1.0,
+         generate_chart=True, chart_images_folder=work_dir + '/success_charts'),
     # Examples of twin_keypoints feature: allows keypoint i to match gt[j] or gt[i]
     # Useful for symmetric keypoints like left/right body parts
     # In COCO format: left_shoulder(5)-right_shoulder(6), left_elbow(7)-right_elbow(8), etc.
@@ -263,10 +265,13 @@ val_evaluator = [
         type='ClassificationMetricConfusionMatrix',
         prefix = "b",
         classifiers=[
-            dict(field_name='gender', num_classes=3),
-            dict(field_name='shape', num_classes=2),
+            dict(field_name='gender', num_classes=3,
+                 class_names=['male', 'female', 'unknown']),
+            dict(field_name='shape', num_classes=2,
+                 class_names=['slim', 'wide']),
         ],
         generate_chart=True,
+        use_ratios=True,
         chart_images_folder=work_dir + '/confusion_matrices'
     )
 ]

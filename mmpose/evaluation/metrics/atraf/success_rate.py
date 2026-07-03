@@ -12,35 +12,39 @@ from mmpose.evaluation.metrics.atraf._score_base import _AtrafScoreMetricBase
 
 
 @METRICS.register_module()
-class Recall_Atraf(_AtrafScoreMetricBase):
-    """ATRAF Recall / Precision / F1 metrics with a best-F1 threshold search.
+class Success_Rate(_AtrafScoreMetricBase):
+    """ATRAF success-rate metrics with a best-combined threshold search.
 
-    At the fixed ``score_threshold`` this metric reports Recall, Precision, F1
-    and F2. It also scans score thresholds in [0, 1] to report the best F1
-    (``SmartF1``) and the threshold that achieves it (``SmartThreshold``).
+    Uses the 2x2 contingency table (see :class:`_AtrafScoreMetricBase`) where
+    A = correct & high-score, B = wrong & high-score, C = correct & low-score,
+    D = wrong & low-score and N = A + B + C + D (total valid keypoints).
 
-    Definitions use the 2x2 contingency table (see
-    :class:`_AtrafScoreMetricBase`): A = correct & high-score,
-    B = wrong & high-score, C = correct & low-score, N = total valid.
+    At the fixed ``score_threshold`` it reports:
 
-    - Recall    = A / (A + C)
-    - Precision = A / (A + B)
-    - F1        = 2 * P * R / (P + R)
-    - F2        = (F1 + PD_Success_Rate) / 2, with PD_Success_Rate = A / N
-    - SmartF1   = max F1 over score thresholds in [0, 1]
+    - PD_Success_Rate  = A / N
+    - FAR_Error_Rate   = B / N
+    - Skip_Rate        = (C + D) / N
+    - Combined_Success_Rate =
+        [ w_FAR*(1 - FAR_Error_Rate) + w_skip*(1 - Skip_Rate)
+          + w_PD*PD_Success_Rate ] / W,   W = w_FAR + w_skip + w_PD
+
+    It also scans score thresholds in [0, 1] to report the best combined value
+    (``Best_Combined_Success_Rate``) and the threshold that achieves it
+    (``BestThreshold``).
 
     Args:
         thr (float): Threshold of PCK calculation. Default: 0.05.
-        norm_item (str | Sequence[str]): Normalization item(s): 'bbox', 'head',
-            'torso'. Default: ``'bbox'``.
+        norm_item (str | Sequence[str]): Normalization item(s). Default: 'bbox'.
         kpt_indexes (Sequence[int], optional): Keypoint indices to include.
-        score_threshold (float): Keypoint score threshold for a "high-score"
-            prediction. Default: 0.5.
-        num_steps (int): Number of thresholds sampled in [0, 1] for the SmartF1
-            search. Default: 101 (i.e. step 0.01).
-        generate_chart (bool): Save a Precision-Recall chart. Default: False.
+        score_threshold (float): Fixed "high-score" threshold. Default: 0.5.
+        weight_FAR (float): Weight of the (1 - FAR_Error_Rate) term. Default: 1.
+        weight_skip (float): Weight of the (1 - Skip_Rate) term. Default: 1.
+        weight_PD (float): Weight of the PD_Success_Rate term. Default: 1.
+        num_steps (int): Number of thresholds sampled in [0, 1] for the best
+            combined search. Default: 101.
+        generate_chart (bool): Save a Combined-vs-threshold chart. Default: False.
         chart_images_folder (str, optional): Folder for chart PNGs.
-        collect_device (str): Collect device, 'cpu' or 'gpu'. Default: 'cpu'.
+        collect_device (str): Collect device. Default: 'cpu'.
         prefix (str, optional): Metric prefix. Default: ``None``.
         twin_keypoints (Sequence[Sequence[int]], optional): Symmetric pairs.
     """
@@ -50,6 +54,9 @@ class Recall_Atraf(_AtrafScoreMetricBase):
                  norm_item: Union[str, Sequence[str]] = 'bbox',
                  kpt_indexes: Optional[Sequence[int]] = None,
                  score_threshold: float = 0.5,
+                 weight_FAR: float = 1.0,
+                 weight_skip: float = 1.0,
+                 weight_PD: float = 1.0,
                  num_steps: int = 101,
                  ignore_gt_out_of_image: bool = False,
                  ignore_gt_out_of_bbox: bool = False,
@@ -70,54 +77,70 @@ class Recall_Atraf(_AtrafScoreMetricBase):
             prefix=prefix,
             twin_keypoints=twin_keypoints)
         self.score_threshold = score_threshold
+        self.weight_FAR = float(weight_FAR)
+        self.weight_skip = float(weight_skip)
+        self.weight_PD = float(weight_PD)
         self.num_steps = int(num_steps)
         self.generate_chart = bool(generate_chart)
         self.chart_images_folder = chart_images_folder
 
-    def _metrics_for_norm(self, inputs):
-        """Compute Recall/Precision/F1/F2 + SmartF1/SmartThreshold for one norm.
+    def _rates(self, A, B, C, D, N):
+        """PD / FAR-error / skip rates from contingency counts."""
+        if N <= 0:
+            return 0.0, 0.0, 0.0
+        pd = float(A / N)
+        far_err = float(B / N)
+        skip = float((C + D) / N)
+        return pd, far_err, skip
 
-        Returns a dict of the six values plus the (recalls, precisions,
-        thresholds, best_t, best_f1) needed for the PR chart.
-        """
+    def _combined(self, pd, far_err, skip):
+        """Weighted, normalized combined success rate."""
+        W = self.weight_FAR + self.weight_skip + self.weight_PD
+        if W <= 0:
+            return 0.0
+        return float((self.weight_FAR * (1.0 - far_err) +
+                      self.weight_skip * (1.0 - skip) +
+                      self.weight_PD * pd) / W)
+
+    def _metrics_for_norm(self, inputs):
+        """Compute the six success-rate values for one normalization item."""
         pred_coords, gt_coords, mask, pred_scores, norm_factor = inputs
 
-        # Fixed-threshold Recall / Precision / F1 / F2.
-        A, B, C, _, N = self._counts_at_threshold(
+        # Fixed-threshold rates + combined.
+        A, B, C, D, N = self._counts_at_threshold(
             pred_coords, gt_coords, mask, pred_scores, norm_factor,
             self.score_threshold)
-        precision, recall, f1 = self._prf(A, B, C)
-        pd_success_rate = float(A / N) if N > 0 else 0.0
-        f2 = float((f1 + pd_success_rate) / 2.0)
+        pd, far_err, skip = self._rates(A, B, C, D, N)
+        combined = self._combined(pd, far_err, skip)
 
-        # SmartF1: best F1 over the threshold sweep.
+        # Best combined over the threshold sweep.
         thresholds = np.linspace(0.0, 1.0, self.num_steps)
-        best_f1, best_t = -1.0, 0.0
-        recalls, precisions = [], []
+        best_c, best_t = -1.0, 0.0
+        combined_curve = []
         for t in thresholds:
-            a, b, c, _, _ = self._counts_at_threshold(
+            a, b, c, d, n = self._counts_at_threshold(
                 pred_coords, gt_coords, mask, pred_scores, norm_factor, t)
-            p, r, sf1 = self._prf(a, b, c)
-            precisions.append(p)
-            recalls.append(r)
-            if sf1 > best_f1 or (abs(sf1 - best_f1) <= 1e-12 and t < best_t):
-                best_f1 = sf1
+            cpd, cfar, cskip = self._rates(a, b, c, d, n)
+            cval = self._combined(cpd, cfar, cskip)
+            combined_curve.append(cval)
+            if cval > best_c or (abs(cval - best_c) <= 1e-12 and t < best_t):
+                best_c = cval
                 best_t = float(t)
 
         values = {
-            'Recall': recall,
-            'Precision': precision,
-            'F1': f1,
-            'F2': f2,
-            'SmartF1': float(best_f1),
-            'SmartThreshold': float(best_t),
+            'PD_Success_Rate': pd,
+            'FAR_Error_Rate': far_err,
+            'Skip_Rate': skip,
+            'Combined_Success_Rate': combined,
+            'Best_Combined_Success_Rate': float(best_c),
+            'BestThreshold': float(best_t),
         }
-        chart = (recalls, precisions, thresholds, best_t, float(best_f1))
+        chart = (thresholds, combined_curve, best_t, float(best_c))
         return values, chart
 
-    def _generate_and_log_chart(self, recalls, precisions, thresholds, best_t,
-                                best_f1, norm_name):
-        """Generate a Precision-Recall chart and optionally log to TensorBoard."""
+    def _generate_and_log_chart(self, thresholds, combined_curve, best_t,
+                                best_c, norm_name):
+        """Generate a Combined-vs-threshold chart and optionally log it."""
         if not self.generate_chart or plt is None:
             return
         logger = MMLogger.get_current_instance()
@@ -125,7 +148,7 @@ class Recall_Atraf(_AtrafScoreMetricBase):
             out_folder = self.chart_images_folder or os.path.join(
                 os.getcwd(), 'chart_images')
             os.makedirs(out_folder, exist_ok=True)
-            name = f'SmartF1_{norm_name}'
+            name = f'CombinedSuccess_{norm_name}'
             step = int(self._chart_step) if hasattr(self, '_chart_step') \
                 else None
             if step is not None:
@@ -134,26 +157,21 @@ class Recall_Atraf(_AtrafScoreMetricBase):
                 out_path = os.path.join(out_folder, f'{name}.png')
 
             fig, ax = plt.subplots(figsize=(6, 6))
-            rec_arr = np.asarray(recalls)
-            prec_arr = np.asarray(precisions)
-            keep = ~((rec_arr == 0) & (prec_arr == 0))
-            ax.plot(rec_arr[keep], prec_arr[keep], '-o', markersize=3)
-            best_idx = int(np.argmin(np.abs(thresholds - best_t)))
-            ax.plot(recalls[best_idx], precisions[best_idx], 'ro', markersize=8)
+            ax.plot(thresholds, combined_curve, '-o', markersize=3)
+            ax.plot(best_t, best_c, 'ro', markersize=8)
             ax.annotate(
-                f't={best_t:.3f}\nF1={best_f1:.3f}',
-                xy=(recalls[best_idx], precisions[best_idx]),
+                f't={best_t:.3f}\nC={best_c:.3f}', xy=(best_t, best_c),
                 xytext=(5, -15), textcoords='offset points')
-            ax.set_xlabel('Recall')
-            ax.set_ylabel('Precision')
-            ax.set_title(f'Smart F1 ({norm_name})')
-            ax.set_xlim(left=0)
+            ax.set_xlabel('Score threshold')
+            ax.set_ylabel('Combined Success Rate')
+            ax.set_title(f'Combined Success Rate ({norm_name})')
+            ax.set_xlim(0, 1)
             ax.set_ylim(bottom=0)
             ax.grid(True)
             fig.tight_layout()
             fig.savefig(out_path)
             plt.close(fig)
-            logger.info(f'Saved Recall_Atraf chart to {out_path}')
+            logger.info(f'Saved Success_Rate chart to {out_path}')
 
             if _TB_AVAILABLE:
                 gs = int(self._chart_step) if hasattr(self, '_chart_step') \
@@ -162,13 +180,13 @@ class Recall_Atraf(_AtrafScoreMetricBase):
                         out_path, out_folder,
                         f'{self.__class__.__name__}/{name}', global_step=gs):
                     logger.info(
-                        f'Logged Recall_Atraf chart to TensorBoard '
+                        f'Logged Success_Rate chart to TensorBoard '
                         f'(logdir={out_folder}, step={gs})')
                 else:
                     logger.warning(
-                        'Failed to write Recall_Atraf chart to TensorBoard.')
+                        'Failed to write Success_Rate chart to TensorBoard.')
         except Exception as e:
-            logger.warning(f'Failed to generate Recall_Atraf chart: {e}')
+            logger.warning(f'Failed to generate Success_Rate chart: {e}')
 
     def compute_metrics(self, results: list) -> Dict[str, float]:
         logger: MMLogger = MMLogger.get_current_instance()
@@ -180,7 +198,6 @@ class Recall_Atraf(_AtrafScoreMetricBase):
         chart_step = int(self._chart_step)
         self._chart_step = _get_chart_step(fallback=chart_step)
 
-        # (norm item, metric-key suffix, norm result key, chart tag)
         norm_specs = [
             ('bbox', '', 'bbox_size', 'bbox'),
             ('head', 'h', 'head_size', 'head'),

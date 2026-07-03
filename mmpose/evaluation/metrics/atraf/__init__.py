@@ -3,9 +3,8 @@ from .classification_metric import ClassificationMetric
 from .classification_confusion import ClassificationMetricConfusionMatrix
 from .pck_accuracy import AtrafPCKAccuracy
 from .auc_epe import AtrafAUC, AtrafEPE
-from .recall_far import Recall_Atraf, FAR_atraf
-from .smart_f1 import Smart_F1
+from .recall_far import Recall_Atraf
+from .success_rate import Success_Rate
 
 __all__ = ['ClassificationMetric', 'ClassificationMetricConfusionMatrix', 'AtrafPCKAccuracy', 'AtrafAUC', 'AtrafEPE',
-           'Recall_Atraf', 'FAR_atraf', 'Smart_F1']
-
+           'Recall_Atraf', 'Success_Rate']

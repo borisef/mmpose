@@ -1,6 +1,7 @@
 import numpy as np
 
-from mmpose.evaluation.metrics.atraf.smart_f1 import Smart_F1
+# The Smart_F1 search is now folded into Recall_Atraf (SmartF1/SmartThreshold).
+from mmpose.evaluation.metrics.atraf.recall_far import Recall_Atraf
 
 
 def make_sample(pred_kpts, gt_kpts, scores=None, bbox=None):
@@ -33,7 +34,7 @@ def test_smart_f1_basic_two_keypoints():
 	gt = np.array([[[10.0, 10.0], [20.0, 20.0]]], dtype=np.float32)
 	scores = np.array([[0.6, 0.4]], dtype=np.float32)
 
-	metric = Smart_F1(thr=0.05, norm_item='bbox', num_steps=101)
+	metric = Recall_Atraf(thr=0.05, norm_item='bbox', num_steps=101)
 	sample = make_sample(pred, gt, scores)
 	metric.process([{}], [sample])
 	res = metric.compute_metrics(metric.results)

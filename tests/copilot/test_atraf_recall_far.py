@@ -1,6 +1,7 @@
 import numpy as np
 
-from mmpose.evaluation.metrics.atraf.recall_far import Recall_Atraf, FAR_atraf
+from mmpose.evaluation.metrics.atraf.recall_far import Recall_Atraf
+from mmpose.evaluation.metrics.atraf.success_rate import Success_Rate
 
 
 def make_sample(pred_kpts, gt_kpts, scores=None, bbox=None):
@@ -26,7 +27,7 @@ def pytest_float_equal(a, b, eps=1e-6):
 	return abs(a - b) <= eps
 
 
-def test_recall_far_all_correct():
+def test_recall_all_correct():
 	pred = np.array([[[10.0, 10.0], [20.0, 20.0]]], dtype=np.float32)
 	gt = pred.copy()
 	scores = np.array([[0.9, 0.8]], dtype=np.float32)
@@ -35,20 +36,19 @@ def test_recall_far_all_correct():
 	sample = make_sample(pred, gt, scores)
 	metric.process([{}], [sample])
 	res = metric.compute_metrics(metric.results)
-	assert 'Recall' in res and 'FAR' in res
+	# FAR is removed; Recall_Atraf now emits F2/SmartF1/SmartThreshold.
+	assert 'FAR' not in res
+	assert 'Recall' in res and 'F2' in res and 'SmartF1' in res
 	assert pytest_float_equal(res['Recall'], 1.0)
-	assert pytest_float_equal(res['FAR'], 0.0)
-	# Precision and F1 should be 1.0 when all high-score detections are correct
 	assert pytest_float_equal(res['Precision'], 1.0)
 	assert pytest_float_equal(res['F1'], 1.0)
+	# F2 = (F1 + PD_Success_Rate)/2 = (1.0 + 1.0)/2 = 1.0 (all correct & high)
+	assert pytest_float_equal(res['F2'], 1.0)
 
 
-def test_recall_far_one_wrong_high_score():
+def test_recall_one_wrong_high_score():
 	# kp0: correct, high-score (0.9 > 0.5)
 	# kp1: incorrect (pred far from gt), high-score (0.8 > 0.5)
-	# Total correct: 1, total high-score: 2
-	# Recall = 1/1 = 1.0
-	# FAR = (incorrect & high-score) / total high-score = 1/2 = 0.5
 	pred = np.array([[[10.0, 10.0], [200.0, 200.0]]], dtype=np.float32)
 	gt = np.array([[[10.0, 10.0], [20.0, 20.0]]], dtype=np.float32)
 	scores = np.array([[0.9, 0.8]], dtype=np.float32)
@@ -58,23 +58,13 @@ def test_recall_far_one_wrong_high_score():
 	metric.process([{}], [sample])
 	res = metric.compute_metrics(metric.results)
 	assert pytest_float_equal(res['Recall'], 1.0)
-	assert pytest_float_equal(res['FAR'], 0.5)
 	# Precision = correct_high / total_high = 1/2 = 0.5
 	assert pytest_float_equal(res['Precision'], 0.5)
 	# F1 = 2 * P * R / (P + R) = 2 * 0.5 * 1 / 1.5 = 0.666666...
-	assert pytest_float_equal(res['F1'], 2.0 * 0.5 * 1.0 / (0.5 + 1.0))
-
-
-def test_far_atraf_wrapper():
-	pred = np.array([[[10.0, 10.0], [200.0, 200.0]]], dtype=np.float32)
-	gt = np.array([[[10.0, 10.0], [20.0, 20.0]]], dtype=np.float32)
-	scores = np.array([[0.1, 0.9]], dtype=np.float32)
-
-	metric = FAR_atraf(thr=0.05, norm_item='bbox', score_threshold=0.5)
-	sample = make_sample(pred, gt, scores)
-	metric.process([{}], [sample])
-	res = metric.compute_metrics(metric.results)
-	assert any(k.startswith('FAR') for k in res.keys())
+	f1 = 2.0 * 0.5 * 1.0 / (0.5 + 1.0)
+	assert pytest_float_equal(res['F1'], f1)
+	# PD_Success_Rate = correct_high / N = 1/2 = 0.5 -> F2 = (f1 + 0.5)/2
+	assert pytest_float_equal(res['F2'], (f1 + 0.5) / 2.0)
 
 
 def test_twin_keypoints_behavior():
@@ -89,7 +79,6 @@ def test_twin_keypoints_behavior():
 	metric_no_twin.process([{}], [sample])
 	res_no_twin = metric_no_twin.compute_metrics(metric_no_twin.results)
 	assert pytest_float_equal(res_no_twin['Recall'], 0.0)
-	# Without twin: one high-score incorrect -> precision 0/1 = 0.0, F1 = 0.0
 	assert pytest_float_equal(res_no_twin['Precision'], 0.0)
 	assert pytest_float_equal(res_no_twin['F1'], 0.0)
 
@@ -98,71 +87,72 @@ def test_twin_keypoints_behavior():
 	metric_twin.process([{}], [sample])
 	res_twin = metric_twin.compute_metrics(metric_twin.results)
 	assert pytest_float_equal(res_twin['Recall'], 0.5)
-	# With twin: total_high_score=1 (kp0), correct_high=1 -> precision=1.0
 	assert pytest_float_equal(res_twin['Precision'], 1.0)
 	# F1 = 2 * 1.0 * 0.5 / (1.5) = 0.666666...
 	assert pytest_float_equal(res_twin['F1'], 2.0 * 1.0 * 0.5 / (1.0 + 0.5))
 
 
-def test_recall_far_110_keypoints_exact_scenario():
-	"""
-	Test CORRECTED FAR calculation with 110 keypoints distributed as:
-	- 50: Correct & High-score
-	- 30: Wrong & High-score
-	- 20: Correct & Low-score
-	- 10: Wrong & Low-score
-
-	Expected:
-	- Recall = 50 / (50+20) = 50/70 ≈ 0.714286
-	- FAR (False Alarm Rate) = 30 / (30+50) = 30/80 = 0.375
-	  (incorrect & high-score) / (total high-score detections)
-	"""
+def _make_110_kpt_sample():
+	"""110 keypoints: 50 correct/high, 30 wrong/high, 20 correct/low, 10 wrong/low."""
 	num_kpts = 110
-
 	pred_coords = np.zeros((1, num_kpts, 2), dtype=np.float32)
 	gt_coords = np.zeros((1, num_kpts, 2), dtype=np.float32)
 	scores = np.zeros((1, num_kpts), dtype=np.float32)
 
-	# Group 1: Correct & High-score (0-49)
-	for i in range(50):
+	for i in range(50):  # Correct & High-score
 		pred_coords[0, i] = [10.0 + i * 0.1, 10.0 + i * 0.1]
 		gt_coords[0, i] = [10.0 + i * 0.1, 10.0 + i * 0.1]
 		scores[0, i] = 0.8
-
-	# Group 2: Wrong & High-score (50-79)
-	for i in range(50, 80):
+	for i in range(50, 80):  # Wrong & High-score
 		pred_coords[0, i] = [10.0 + (i-50) * 0.1, 10.0 + (i-50) * 0.1]
 		gt_coords[0, i] = [50.0 + (i-50) * 0.1, 50.0 + (i-50) * 0.1]
 		scores[0, i] = 0.8
-
-	# Group 3: Correct & Low-score (80-99)
-	for i in range(80, 100):
+	for i in range(80, 100):  # Correct & Low-score
 		pred_coords[0, i] = [20.0 + (i-80) * 0.1, 20.0 + (i-80) * 0.1]
 		gt_coords[0, i] = [20.0 + (i-80) * 0.1, 20.0 + (i-80) * 0.1]
 		scores[0, i] = 0.3
-
-	# Group 4: Wrong & Low-score (100-109)
-	for i in range(100, 110):
+	for i in range(100, 110):  # Wrong & Low-score
 		pred_coords[0, i] = [20.0 + (i-100) * 0.1, 20.0 + (i-100) * 0.1]
 		gt_coords[0, i] = [60.0 + (i-100) * 0.1, 60.0 + (i-100) * 0.1]
 		scores[0, i] = 0.3
+	return make_sample(pred_coords, gt_coords, scores)
 
+
+def test_recall_110_keypoints_exact_scenario():
+	"""A=50, B=30, C=20, D=10 -> Recall=50/70, Precision=50/80, F1=2/3."""
 	metric = Recall_Atraf(thr=0.05, norm_item='bbox', score_threshold=0.5)
-	sample = make_sample(pred_coords, gt_coords, scores)
-	metric.process([{}], [sample])
+	metric.process([{}], [_make_110_kpt_sample()])
 	res = metric.compute_metrics(metric.results)
 
-	expected_recall = 50.0 / 70.0  # 0.714286
-	expected_far = 30.0 / 80.0      # 0.375
+	expected_recall = 50.0 / 70.0
+	expected_precision = 50.0 / 80.0
+	expected_f1 = 2.0 * expected_precision * expected_recall / (expected_precision + expected_recall)
 
-	expected_precision = 50.0 / 80.0  # 0.625
-	expected_f1 = 2.0 * expected_precision * expected_recall / (expected_precision + expected_recall)  # 2/3
+	assert 'FAR' not in res
+	assert pytest_float_equal(res['Recall'], expected_recall, eps=1e-5)
+	assert pytest_float_equal(res['Precision'], expected_precision, eps=1e-5)
+	assert pytest_float_equal(res['F1'], expected_f1, eps=1e-5)
 
-	assert pytest_float_equal(res['Recall'], expected_recall, eps=1e-5), \
-		f"Expected Recall={expected_recall}, got {res['Recall']}"
-	assert pytest_float_equal(res['FAR'], expected_far, eps=1e-5), \
-		f"Expected FAR={expected_far}, got {res['FAR']}"
-	assert pytest_float_equal(res['Precision'], expected_precision, eps=1e-5), \
-		f"Expected Precision={expected_precision}, got {res['Precision']}"
-	assert pytest_float_equal(res['F1'], expected_f1, eps=1e-5), \
-		f"Expected F1={expected_f1}, got {res['F1']}"
+
+def test_success_rate_110_keypoints_exact_scenario():
+	"""A=50, B=30, C=20, D=10, N=110 with equal weights.
+
+	PD=50/110, FAR_Error=30/110, Skip=30/110,
+	Combined = (1/3)[(1-30/110)+(1-30/110)+50/110].
+	"""
+	metric = Success_Rate(thr=0.05, norm_item='bbox', score_threshold=0.5)
+	metric.process([{}], [_make_110_kpt_sample()])
+	res = metric.compute_metrics(metric.results)
+
+	pd = 50.0 / 110.0
+	far_err = 30.0 / 110.0
+	skip = 30.0 / 110.0
+	combined = ((1.0 - far_err) + (1.0 - skip) + pd) / 3.0
+
+	assert pytest_float_equal(res['PD_Success_Rate'], pd, eps=1e-5)
+	assert pytest_float_equal(res['FAR_Error_Rate'], far_err, eps=1e-5)
+	assert pytest_float_equal(res['Skip_Rate'], skip, eps=1e-5)
+	assert pytest_float_equal(res['Combined_Success_Rate'], combined, eps=1e-5)
+	assert 'Best_Combined_Success_Rate' in res and 'BestThreshold' in res
+	# Best over thresholds is at least as good as the fixed-threshold value.
+	assert res['Best_Combined_Success_Rate'] >= res['Combined_Success_Rate'] - 1e-9
