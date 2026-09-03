@@ -1,0 +1,81 @@
+flowchart TB
+    I["Input image"]:::input
+    S["Stem<br/>2 × 3×3 conv, stride 2<br/>64 channels"]:::stem
+    T1["Stage 1<br/>1 branch<br/>4 Bottleneck blocks<br/>256 channels"]:::stage1
+    X1["Transition 1<br/>create 2-resolution streams"]:::transition
+
+    I --> S --> T1 --> X1
+
+    subgraph STAGE2["Stage 2"]
+        direction LR
+        A0["Branch 0<br/>high resolution<br/>32 ch"]:::hi
+        A1["Branch 1<br/>lower resolution<br/>64 ch"]:::mid
+        F2["Fusion"]:::fusion
+        A0 --> F2
+        A1 --> F2
+    end
+
+    X1 --> A0
+    X1 --> A1
+
+    X2["Transition 2<br/>add 3rd resolution"]:::transition
+    F2 --> X2
+
+    subgraph STAGE3["Stage 3<br/>4 repeated modules"]
+        direction LR
+        B0["Branch 0<br/>32 ch"]:::hi
+        B1["Branch 1<br/>64 ch"]:::mid
+        B2["Branch 2<br/>128 ch"]:::low
+        F3["Multi-scale fusion"]:::fusion
+        B0 --> F3
+        B1 --> F3
+        B2 --> F3
+    end
+
+    X2 --> B0
+    X2 --> B1
+    X2 --> B2
+
+    X3["Transition 3<br/>add 4th resolution"]:::transition
+    F3 --> X3
+
+    subgraph STAGE4["Stage 4<br/>3 repeated modules"]
+        direction LR
+        C0["Branch 0<br/>highest resolution<br/>32 ch"]:::hi
+        C1["Branch 1<br/>64 ch"]:::mid
+        C2["Branch 2<br/>128 ch"]:::low
+        C3["Branch 3<br/>lowest resolution<br/>256 ch"]:::vlow
+        F4["Multi-scale fusion"]:::fusion
+        C0 --> F4
+        C1 --> F4
+        C2 --> F4
+        C3 --> F4
+    end
+
+    X3 --> C0
+    X3 --> C1
+    X3 --> C2
+    X3 --> C3
+
+    O0["Branch 0 output<br/>shared high-resolution feature<br/>used by pose/classifier heads"]:::output
+    O1["Auxiliary outputs<br/>lower-resolution branches"]:::aux
+
+    F4 --> O0
+    F4 --> O1
+
+    N["HRNet principle:<br/>preserve high-resolution features throughout<br/>while repeatedly exchanging information across scales"]:::note
+    O0 -.-> N
+
+    classDef input fill:#E8F1FF,stroke:#3B82F6,stroke-width:2px,color:#0F172A;
+    classDef stem fill:#EEF2FF,stroke:#6366F1,stroke-width:2px,color:#111827;
+    classDef stage1 fill:#DCFCE7,stroke:#16A34A,stroke-width:2px,color:#14532D;
+    classDef transition fill:#F3F4F6,stroke:#6B7280,stroke-width:2px,color:#111827;
+    classDef fusion fill:#FEF3C7,stroke:#D97706,stroke-width:2px,color:#78350F;
+    classDef hi fill:#D1FAE5,stroke:#059669,stroke-width:2px,color:#064E3B;
+    classDef mid fill:#DBEAFE,stroke:#2563EB,stroke-width:2px,color:#1E3A8A;
+    classDef low fill:#FCE7F3,stroke:#DB2777,stroke-width:2px,color:#831843;
+    classDef vlow fill:#EDE9FE,stroke:#7C3AED,stroke-width:2px,color:#4C1D95;
+    classDef output fill:#FFF7ED,stroke:#EA580C,stroke-width:2px,color:#7C2D12;
+    classDef aux fill:#F8FAFC,stroke:#64748B,stroke-width:1.5px,color:#0F172A;
+    classDef note fill:#FAFAF9,stroke:#78716C,stroke-width:1.5px,color:#292524,stroke-dasharray: 4 4;
+

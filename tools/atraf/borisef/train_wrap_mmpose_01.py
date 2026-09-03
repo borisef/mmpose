@@ -1,7 +1,14 @@
 import copy
+import os
 import os.path
 import os.path as osp
 import sys
+
+# Ensure cwd is mmpose root so relative config paths resolve correctly
+_MMPOSE_ROOT = osp.dirname(osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__)))))
+os.chdir(_MMPOSE_ROOT)
+if _MMPOSE_ROOT not in sys.path:
+    sys.path.insert(0, _MMPOSE_ROOT)
 
 import mmcv
 import numpy as np
