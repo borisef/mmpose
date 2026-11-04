@@ -25,7 +25,7 @@ import tools.train as train
 config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrnet-w32_dark-8xb64-210e_coco-256x192_try.py" #works very slow
 #config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrnet-w32_udp-8xb64-210e_coco-384x288_try.py" # works
 
-#config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_3xrsn50_8xb32-210e_coco-256x192_try.py" # NOT GOOD , ???
+#config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/t    d-hm_3xrsn50_8xb32-210e_coco-256x192_try.py" # NOT GOOD , ???
 #config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_rsn50_8xb32-210e_coco-256x192_try.py" #NOT GOOD, bug
 #config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/simcc_res50_8xb32-140e_coco-384x288_try.py" # works
 #config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/rtmo-s_8xb32-600e_coco-640x640_try.py" #NOT GOOD runs generates crap
@@ -39,7 +39,8 @@ config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrne
 config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrnet-w32_udp-8xb64-210e_coco-384x288_try1.py" # WIP (class head)
 config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrnet-w32_udp-8xb64-210e_coco-384x288_try2.py" # WIP (different metrics)
 config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrnet-w32_udp-8xb64-210e_coco-384x288_try_changes.py" # WIP (different metrics)
-
+config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrnet-w32_udp-8xb64-210e_coco-384x288_try_rfdetr_augmentations.py" # rf-detr custom augmentations
+config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrnet-w32_udp-8xb64-210e_coco-384x288_like_try_rfdetr_large_with_aug.py"
 sys.argv.append(config_file)
 
 train.main()
