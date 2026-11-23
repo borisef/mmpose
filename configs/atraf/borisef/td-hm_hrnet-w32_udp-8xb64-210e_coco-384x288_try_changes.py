@@ -1,8 +1,20 @@
 _base_ = ['/home/borisef/projects/mm/mmpose/configs/_base_/default_runtime.py']
 
+# Import the ATRAF modules explicitly at config-load time. MMEngine's registry
+# swallows ImportError when auto-importing registry locations and later reports
+# only "X is not in the mmpose::hook registry". With allow_failed_imports=False
+# the real traceback (missing package, stale install, ...) is raised instead.
+custom_imports = dict(
+    imports=[
+        'mmpose.engine.hooks.atraf',
+        'mmpose.models.heads.heatmap_heads.atraf.heatmap_head_with_classifiers',
+        'mmpose.evaluation.metrics.atraf',
+    ],
+    allow_failed_imports=False)
+
 MY_BATCH = 1
-work_dir =  '/home/borisef/projects/mm/mmpose/tools/atraf/borisef/work_dirs/hrnet_UDP_w32_try_changes'
-resume = True
+work_dir = '/home/borisef/projects/mm/mmpose/tools/atraf/borisef/work_dirs/hrnet_UDP_w32_try_changes_hm144x192'
+resume = False
 
 # runtime
 train_cfg = dict(max_epochs=40, val_interval=1)
@@ -62,8 +74,11 @@ default_hooks = dict(
 )
 
 # codec settings
+# Increase the heatmap from 72x96 (1/4-scale) to 144x192 (1/2-scale).
+# Sigma is doubled as well so the Gaussian target keeps approximately the
+# same footprint in the original input-image coordinates.
 codec = dict(
-    type='UDPHeatmap', input_size=(288, 384), heatmap_size=(72, 96), sigma=3)
+    type='UDPHeatmap', input_size=(288, 384), heatmap_size=(144, 192), sigma=6)
 
 # model settings
 model = dict(
@@ -113,17 +128,20 @@ model = dict(
             dict(num_classes = 3, weight = 0.5, field_name = "gender",labels = ["M", "W", "S"],
                  loss_cfg=dict(type='CrossEntropyLoss', reduction='none'),
                  num_convs = 2,  num_fcs = 2, conv_out_channels = 256, fc_out_channels = 256,
-                 lr_schedule=[(0, 0.0), (20, 0.001)],
+                 lr_schedule=[(0, 0.001)],
                  ),
             dict(num_classes = 2, weight = 0.5, field_name = "shape", labels = ["round", "rectangular"],
                  loss_cfg=dict(type='FocalLoss', gamma=2.0, reduction='none'),
                  num_convs=1, num_fcs=1, conv_out_channels=128, fc_out_channels=64,
-                 lr_schedule=[(0, 0.0), (20, 0.001)],
+                 lr_schedule=[(0, 0.001)],
                  ),
         ],
         in_channels=32,
         out_channels=17,
-        deconv_out_channels=None,
+        # HRNet backbone is unchanged. This single head-side deconv upsamples
+        # the fused high-resolution pose feature from 72x96 to 144x192.
+        deconv_out_channels=(256, ),
+        deconv_kernel_sizes=(4, ),
         loss=dict(type='KeypointMSELoss', use_target_weight=True),
         #TODO: define classifier's loss
         decoder=codec),

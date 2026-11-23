@@ -45,7 +45,8 @@ config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrne
 
 config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrnet-w32_udp-8xb64-210e_coco-384x288_try1.py" # WIP (class head)
 config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrnet-w32_udp-8xb64-210e_coco-384x288_try2.py" # WIP (different metrics)
-config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrnet-w32_udp-8xb64-210e_coco-384x288_try_changes.py" # WIP (different metrics)
+#config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrnet-w32_udp-8xb64-210e_coco-384x288_try_changes.py" # WIP (different metrics)
+config_file = "/home/borisef/projects/mm/mmpose/configs/atraf/borisef/td-hm_hrnet-w32_udp-8xb64-210e_coco-384x288_try_changes_freeze_kpts.py" # frozen keypoints, classifiers only (load_from epoch_10)
 
 sys.argv.append(config_file)
 
